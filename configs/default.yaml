@@ -1,0 +1,28 @@
+# Default configuration for the pre-release sales forecasting pipeline.
+seed: 42
+
+data:
+  raw_path: data/raw/vgchartz-2024.csv
+  # Date of the data snapshot. When null it is taken as the latest last_update.
+  snapshot_date: null
+  min_release_year: 1980
+  max_release_year: null
+  # Releases within this many years of the snapshot are flagged as right-censored.
+  censoring_window_years: 2
+
+target:
+  column: total_sales
+  transform: log1p
+
+split:
+  # The last release years with observed sales form the untouched test set.
+  holdout_years: 3
+  cv_folds: 5
+  min_train_years: 10
+  gap_years: 0
+
+features:
+  categorical: [console, genre, publisher, developer]
+  numeric: [critic_score]
+  min_category_count: 5
+  target_encoding_smoothing: 20.0
