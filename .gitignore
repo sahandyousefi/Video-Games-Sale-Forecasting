@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.ipynb_checkpoints/
+
+# Data and artifacts (not versioned)
+data/raw/
+data/interim/
+data/processed/
+models/
+mlruns/
+mlartifacts/
+optuna*.db
+*.joblib
+*.pkl
+
+# OS and editors
+.DS_Store
+.idea/
+.vscode/

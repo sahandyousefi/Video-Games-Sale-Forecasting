@@ -87,7 +87,6 @@ Findings from the audit of `ml-models-and-cross-validation.ipynb` and
 
 ## Phase 1: Foundation
 
-- [ ] 1.1 Add `pyproject.toml` (src layout, Python 3.10+, core dependencies, optional extras for heavy libraries), `LICENSE`, `.gitignore`, package skeleton and a smoke test.
 - [ ] 1.2 Add typed configuration: `configs/default.yaml` and a validated dataclass loader in `src/vgsales/config.py`.
 - [ ] 1.3 Add the raw data schema (column groups, dtypes, leakage list) in `src/vgsales/data/schema.py`.
 - [ ] 1.4 Add a seeded synthetic generator that reproduces the VGChartz 2024 schema and missingness pattern for tests.
@@ -180,3 +179,5 @@ Findings from the audit of `ml-models-and-cross-validation.ipynb` and
 - [ ] 12.4 Rewrite the README: motivation, results from full runs, reproduction steps, project layout.
 
 ## Completed
+
+- [x] 2026-11-19: 1.1 Add `pyproject.toml` (src layout, Python 3.10+, core dependencies, optional extras for heavy libraries), `LICENSE`, `.gitignore`, package skeleton and a smoke test.
