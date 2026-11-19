@@ -87,7 +87,6 @@ Findings from the audit of `ml-models-and-cross-validation.ipynb` and
 
 ## Phase 1: Foundation
 
-- [ ] 1.5 Add a `Makefile` (install, lint, format, test) and a GitHub Actions workflow running ruff and pytest on Python 3.10 and 3.12.
 - [ ] 1.6 Add `data/README.md` (source, license, schema, acquisition, coverage limits) and the `reports/figures/` directory.
 
 ## Phase 2: Data pipeline and time-aware validation
@@ -181,3 +180,4 @@ Findings from the audit of `ml-models-and-cross-validation.ipynb` and
 - [x] 2026-11-19: 1.2 Add typed configuration: `configs/default.yaml` and a validated dataclass loader in `src/vgsales/config.py`.
 - [x] 2026-11-19: 1.3 Add the raw data schema (column groups, dtypes, leakage list) in `src/vgsales/data/schema.py`.
 - [x] 2026-11-19: 1.4 Add a seeded synthetic generator that reproduces the VGChartz 2024 schema and missingness pattern for tests.
+- [x] 2026-11-19: 1.5 Add a `Makefile` (install, lint, format, test) and a GitHub Actions workflow running ruff and pytest on Python 3.10 and 3.12.
