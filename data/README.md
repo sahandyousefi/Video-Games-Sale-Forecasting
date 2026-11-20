@@ -30,6 +30,12 @@ unparseable value or a value outside its schema range raises `SchemaError`;
 with `strict=False` such values are set to missing and counted in a
 `LoadReport`. The loader removes no rows.
 
+`vgsales.data.cleaning.clean` then normalises text (Unicode NFKC, collapsed
+whitespace, empty strings to missing), drops rows without `total_sales` and
+drops exact duplicates. Rows that share a `(title, console)` key but differ in
+other values are kept and counted in the `CleaningReport`, since the extract
+gives no basis for choosing between them.
+
 ## Unit of observation
 
 One row per (title, console) pair. A title released on several platforms
