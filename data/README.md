@@ -90,8 +90,13 @@ Non-missing counts in the full file:
 3. Sales are third-party estimates, not audited publisher figures.
 4. Recent releases are right-censored: their lifetime sales were still
    accumulating at the snapshot date. Titles released within
-   `data.censoring_window_years` of the snapshot are flagged (roadmap item
-   2.3) and reported separately in evaluation.
+   `data.censoring_window_years` of the snapshot are flagged in the
+   `censored` column by `vgsales.data.temporal.apply_release_scope` and
+   reported separately in evaluation. The snapshot is `data.snapshot_date`
+   when set, otherwise the latest `last_update` in the file; this is the only
+   use of `last_update`. Rows without a release date, outside the configured
+   release years or released after the snapshot are removed at the same
+   step.
 5. `critic_score` is missing for about 90% of rows and is only partly
    available before release. It enters the feature set together with a
    missingness indicator (roadmap item 2.8).
