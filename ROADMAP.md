@@ -90,7 +90,6 @@ Findings from the audit of `ml-models-and-cross-validation.ipynb` and
 
 ## Phase 2: Data pipeline and time-aware validation
 
-- [ ] 2.1 Implement the CSV loader with schema validation and dtype coercion.
 - [ ] 2.2 Implement cleaning: keep rows with an observed target only (no zero imputation), parse dates, drop exact duplicates, normalise categorical strings.
 - [ ] 2.3 Add release-year filtering and a right-censoring flag for titles released close to the data snapshot.
 - [ ] 2.4 Implement a release-year holdout split and an expanding-window cross-validator over release years.
@@ -181,3 +180,4 @@ Findings from the audit of `ml-models-and-cross-validation.ipynb` and
 - [x] 2026-11-19: 1.4 Add a seeded synthetic generator that reproduces the VGChartz 2024 schema and missingness pattern for tests.
 - [x] 2026-11-19: 1.5 Add a `Makefile` (install, lint, format, test) and a GitHub Actions workflow running ruff and pytest on Python 3.10 and 3.12.
 - [x] 2026-11-19: 1.6 Add `data/README.md` (source, license, schema, acquisition, coverage limits) and the `reports/figures/` directory.
+- [x] 2026-11-20: 2.1 Implement the CSV loader with schema validation and dtype coercion.

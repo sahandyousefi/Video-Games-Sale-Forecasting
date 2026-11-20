@@ -23,6 +23,13 @@ kaggle datasets download -d asaniczka/video-game-sales-2024 -p data/raw --unzip
 The pipeline expects `data/raw/vgchartz-2024.csv`, the value of
 `data.raw_path` in `configs/default.yaml`.
 
+`vgsales.data.loading.load_raw` reads every column as text and then coerces
+it to the schema: text columns to `object` with `NaN` for missing values,
+numeric columns to `float64` and dates to `datetime64[ns]`. By default an
+unparseable value or a value outside its schema range raises `SchemaError`;
+with `strict=False` such values are set to missing and counted in a
+`LoadReport`. The loader removes no rows.
+
 ## Unit of observation
 
 One row per (title, console) pair. A title released on several platforms
