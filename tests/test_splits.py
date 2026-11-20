@@ -8,6 +8,7 @@ from sklearn.model_selection import cross_val_score
 
 from vgsales.config import SplitConfig, load_config
 from vgsales.data.cleaning import clean
+from vgsales.data.grouping import title_key
 from vgsales.data.splits import (
     ExpandingWindowSplit,
     describe_folds,
@@ -140,3 +141,72 @@ def test_default_configuration_on_synthetic_data() -> None:
     assert len(table) == config.split.cv_folds
     assert table["val_end"].max() == dev["release_year"].max()
     assert frame.iloc[test_idx]["release_year"].min() > table["val_end"].max()
+
+
+def _ported_titles() -> tuple[np.ndarray, np.ndarray]:
+    # Title "b" is ported two years later; "d" spans the holdout boundary.
+    years = np.array([2010, 2011, 2012, 2013, 2013, 2014, 2015, 2016, 2016, 2017])
+    groups = np.array(["a", "b", "c", "b", "e", "d", "f", "g", "d", "h"])
+    return years, groups
+
+
+def test_holdout_purges_groups_that_reach_the_test_years() -> None:
+    years, groups = _ported_titles()
+    dev, test = holdout_split(years, holdout_years=2, groups=groups)
+    assert set(groups[test]) == {"g", "d", "h"}
+    assert "d" not in set(groups[dev])
+    assert set(dev) == set(np.flatnonzero(years <= 2015)) - {5}
+
+
+def test_folds_keep_groups_on_one_side() -> None:
+    years, groups = _ported_titles()
+    folds = expanding_window_folds(years, n_splits=5, groups=groups)
+    for fold in folds:
+        assert not set(groups[fold.train_idx]) & set(groups[fold.val_idx])
+        assert years[fold.train_idx].max() < years[fold.val_idx].min()
+    by_year = {fold.val_years[0]: fold for fold in folds}
+    # The 2011 release of "b" is purged when its 2013 port is validated.
+    assert by_year[2013].n_purged == 1
+    assert 1 not in by_year[2013].train_idx
+    assert by_year[2014].n_purged == 0
+    assert by_year[2016].n_purged == 1
+
+
+def test_groups_on_synthetic_titles() -> None:
+    frame, _ = apply_release_scope(
+        clean(make_synthetic(SyntheticSpec(n_titles=400), seed=4))[0],
+        load_config().data,
+    )
+    keys = title_key(frame["title"]).to_numpy()
+    for fold in expanding_window_folds(
+        frame["release_year"], n_splits=4, min_train_years=5, groups=keys
+    ):
+        assert not set(keys[fold.train_idx]) & set(keys[fold.val_idx])
+
+
+def test_splitter_reads_groups_from_argument_or_column() -> None:
+    years, groups = _ported_titles()
+    X = pd.DataFrame({"release_year": years, "title_key": groups})
+    from_arg = list(ExpandingWindowSplit(5, 1).split(X, groups=groups))
+    from_col = list(ExpandingWindowSplit(5, 1, group_column="title_key").split(X))
+    for (a_train, a_val), (b_train, b_val) in zip(from_arg, from_col, strict=True):
+        np.testing.assert_array_equal(a_train, b_train)
+        np.testing.assert_array_equal(a_val, b_val)
+    y = np.arange(years.size, dtype=float)
+    scores = cross_val_score(
+        DummyRegressor(),
+        X,
+        y,
+        cv=ExpandingWindowSplit(3, 1),
+        groups=groups,
+        scoring="neg_mean_absolute_error",
+    )
+    assert scores.shape == (3,)
+
+
+def test_misaligned_or_missing_groups_raise() -> None:
+    years, groups = _ported_titles()
+    with pytest.raises(ValueError, match="length"):
+        holdout_split(years, 1, groups=groups[:-1])
+    with pytest.raises(ValueError, match="missing"):
+        expanding_window_folds(years, 2, groups=np.array([None] * years.size))

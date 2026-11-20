@@ -40,7 +40,12 @@ gives no basis for choosing between them.
 
 One row per (title, console) pair. A title released on several platforms
 appears once per platform, so rows are not independent: the splitting code
-keeps all rows of a title on the same side of every split.
+keeps all rows of a title on the same side of every split. Titles are
+matched across platforms by `vgsales.data.grouping.title_key` (case-folded,
+diacritics and punctuation removed). When a title is ported in a later year,
+its earlier rows are purged from the training side of any split whose
+evaluation block contains the port, which preserves both the time ordering
+and the group separation.
 
 ## Schema
 
