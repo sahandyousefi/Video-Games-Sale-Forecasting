@@ -91,7 +91,6 @@ by one or more items below.
 
 ## Phase 2: Data pipeline and time-aware validation
 
-- [ ] 2.11b Add `notebooks/01_eda.ipynb` built on the package: target distribution, coverage by release year, missingness, censoring.
 
 ## Phase 3: Evaluation framework and baselines
 
@@ -183,3 +182,4 @@ by one or more items below.
 - [x] 2026-11-21: 2.9 Assemble the scikit-learn preprocessing pipeline and add leakage tests (future rows do not change past features, regional columns are rejected).
 - [x] 2026-11-21: 2.10 Move the original notebook to `notebooks/00_original_exploration.ipynb` with a header cell that lists the known issues.
 - [x] 2026-11-21: 2.11a Add descriptive profiling in `vgsales.data.profiling`: missingness, coverage by release year, target summary on both scales, censoring comparison.
+- [x] 2026-11-21: 2.11b Add `notebooks/01_eda.ipynb` built on the package: target distribution, coverage by release year, missingness, censoring.
