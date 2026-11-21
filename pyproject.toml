@@ -46,10 +46,7 @@ where = ["src"]
 target-version = "py310"
 src = ["src", "tests"]
 # The legacy Kaggle notebook is kept unchanged as a record of the original analysis.
-extend-exclude = [
-    "ml-models-and-cross-validation.ipynb",
-    "notebooks/00_original_exploration.ipynb",
-]
+extend-exclude = ["notebooks/00_original_exploration.ipynb"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "NPY", "SIM", "RUF"]

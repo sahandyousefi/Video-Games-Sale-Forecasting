@@ -281,7 +281,7 @@ A `predict_sales` inference function was defined to accept new input data and re
 ## Project Structure
 
     Video-Game-Sales-Forecasting/
-    |-- ml-models-and-cross-validation.ipynb    # Full pipeline: preprocessing, EDA, modeling, cross-validation, deployment
+    |-- notebooks/00_original_exploration.ipynb # Full pipeline: preprocessing, EDA, modeling, cross-validation, deployment
     |-- sales_forecasting_xgb.pkl               # Serialized trained XGBoost model
     |-- README.md
 
@@ -316,7 +316,7 @@ A `predict_sales` inference function was defined to accept new input data and re
 
 4. Launch the notebook:
 
-       jupyter notebook ml-models-and-cross-validation.ipynb
+       jupyter notebook notebooks/00_original_exploration.ipynb
 
 ---
 
