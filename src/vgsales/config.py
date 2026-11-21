@@ -9,6 +9,8 @@ from typing import Any
 
 import yaml
 
+from vgsales.data.schema import assert_no_leakage
+
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "default.yaml"
 
 TARGET_TRANSFORMS = ("log1p", "identity")
@@ -80,19 +82,42 @@ class SplitConfig:
 
 @dataclass(frozen=True)
 class FeatureConfig:
-    """Input columns and encoder hyperparameters."""
+    """Input columns and encoder hyperparameters.
 
-    categorical: tuple[str, ...] = ("console", "genre", "publisher", "developer")
-    numeric: tuple[str, ...] = ("critic_score",)
+    ``categorical`` columns are one-hot encoded with categories rarer than
+    ``min_category_count`` pooled. ``high_cardinality`` columns are encoded by
+    their training frequency and by the temporal target mean. ``numeric``
+    columns are imputed and passed through.
+    """
+
+    categorical: tuple[str, ...] = ("console", "genre")
+    high_cardinality: tuple[str, ...] = ("publisher", "developer")
+    numeric: tuple[str, ...] = (
+        "release_year",
+        "release_month",
+        "release_quarter",
+        "holiday_season",
+        "platform_age_years",
+        "n_platforms",
+        "is_port",
+        "critic_score",
+        "critic_missing",
+    )
     min_category_count: int = 5
     target_encoding_smoothing: float = 20.0
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "categorical", tuple(self.categorical))
-        object.__setattr__(self, "numeric", tuple(self.numeric))
-        overlap = set(self.categorical) & set(self.numeric)
-        if overlap:
-            raise ValueError(f"columns listed as categorical and numeric: {overlap}")
+        groups = ("categorical", "high_cardinality", "numeric")
+        for name in groups:
+            object.__setattr__(self, name, tuple(getattr(self, name)))
+        for i, first in enumerate(groups):
+            for second in groups[i + 1 :]:
+                overlap = set(getattr(self, first)) & set(getattr(self, second))
+                if overlap:
+                    raise ValueError(
+                        f"columns listed as {first} and {second}: {sorted(overlap)}"
+                    )
+        assert_no_leakage(self.categorical + self.high_cardinality + self.numeric)
         _require_int("features.min_category_count", self.min_category_count, 1)
         if float(self.target_encoding_smoothing) < 0:
             raise ValueError("features.target_encoding_smoothing must be >= 0")

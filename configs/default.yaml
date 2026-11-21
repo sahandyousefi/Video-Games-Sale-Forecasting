@@ -22,7 +22,20 @@ split:
   gap_years: 0
 
 features:
-  categorical: [console, genre, publisher, developer]
-  numeric: [critic_score]
+  # One-hot encoded; categories rarer than min_category_count are pooled.
+  categorical: [console, genre]
+  # Encoded by training frequency and by the target mean of earlier years.
+  high_cardinality: [publisher, developer]
+  # Produced by vgsales.features.prerelease; missing values are imputed.
+  numeric:
+    - release_year
+    - release_month
+    - release_quarter
+    - holiday_season
+    - platform_age_years
+    - n_platforms
+    - is_port
+    - critic_score
+    - critic_missing
   min_category_count: 5
   target_encoding_smoothing: 20.0
