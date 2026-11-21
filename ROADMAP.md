@@ -17,7 +17,7 @@ release years that the model has not seen.
 |-- notebooks/                 exploration and walkthrough notebooks
 |-- reports/figures/           generated figures
 |-- src/vgsales/
-|   |-- data/                  schema, loading, cleaning, splits, synthetic data
+|   |-- data/                  schema, loading, cleaning, splits, profiling, synthetic data
 |   |-- features/              leakage-safe encoders, pre-release features
 |   |-- models/                baselines, gradient boosting, PyTorch models
 |   |-- tuning/                Optuna search with time-series CV
@@ -91,7 +91,7 @@ by one or more items below.
 
 ## Phase 2: Data pipeline and time-aware validation
 
-- [ ] 2.11 Add `notebooks/01_eda.ipynb` built on the package: target distribution, coverage by release year, missingness, censoring.
+- [ ] 2.11b Add `notebooks/01_eda.ipynb` built on the package: target distribution, coverage by release year, missingness, censoring.
 
 ## Phase 3: Evaluation framework and baselines
 
@@ -182,3 +182,4 @@ by one or more items below.
 - [x] 2026-11-21: 2.8 Implement the pre-release feature builder (calendar features, platform lifecycle stage, platform count, critic score with a missingness indicator), excluding regional sales by construction.
 - [x] 2026-11-21: 2.9 Assemble the scikit-learn preprocessing pipeline and add leakage tests (future rows do not change past features, regional columns are rejected).
 - [x] 2026-11-21: 2.10 Move the original notebook to `notebooks/00_original_exploration.ipynb` with a header cell that lists the known issues.
+- [x] 2026-11-21: 2.11a Add descriptive profiling in `vgsales.data.profiling`: missingness, coverage by release year, target summary on both scales, censoring comparison.
