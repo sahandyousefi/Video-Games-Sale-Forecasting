@@ -90,7 +90,6 @@ Findings from the audit of `ml-models-and-cross-validation.ipynb` and
 
 ## Phase 2: Data pipeline and time-aware validation
 
-- [ ] 2.7 Implement a temporal target encoder for publisher and developer that uses only strictly earlier release years, with smoothing.
 - [ ] 2.8 Implement the pre-release feature builder (calendar features, platform lifecycle stage, platform count, critic score with a missingness indicator), excluding regional sales by construction.
 - [ ] 2.9 Assemble the scikit-learn preprocessing pipeline and add leakage tests (future rows do not change past features, regional columns are rejected).
 - [ ] 2.10 Move the original notebook to `notebooks/00_original_exploration.ipynb` with a header cell that lists the known issues.
@@ -181,3 +180,4 @@ Findings from the audit of `ml-models-and-cross-validation.ipynb` and
 - [x] 2026-11-20: 2.4 Implement a release-year holdout split and an expanding-window cross-validator over release years.
 - [x] 2026-11-20: 2.5 Group titles across platforms so that a title never appears on both sides of a split.
 - [x] 2026-11-20: 2.6 Implement a leakage-safe frequency encoder fitted on training folds only.
+- [x] 2026-11-21: 2.7 Implement a temporal target encoder for publisher and developer that uses only strictly earlier release years, with smoothing.
