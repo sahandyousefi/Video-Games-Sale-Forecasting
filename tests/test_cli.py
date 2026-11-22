@@ -22,7 +22,8 @@ def small_config(tmp_path: Path) -> Path:
     path = tmp_path / "small.yaml"
     path.write_text(
         "seed: 3\nsplit:\n  cv_folds: 3\n  min_train_years: 5\n"
-        f"output:\n  model_dir: {tmp_path / 'models'}\n",
+        f"output:\n  model_dir: {tmp_path / 'models'}\n"
+        f"  report_dir: {tmp_path / 'reports'}\n",
         encoding="utf-8",
     )
     return path
@@ -128,3 +129,54 @@ def test_module_entry_point() -> None:
         check=True,
     )
     assert completed.stdout.strip() == __version__
+
+
+def test_reports_are_written_to_an_explicit_directory(
+    small_config: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    reports = tmp_path / "reports"
+    common = ["--config", str(small_config), "--synthetic", N_TITLES]
+    assert main(["evaluate", *common, "--report-dir", str(reports)]) == 0
+    assert main(["train", *common, "--report-dir", str(reports)]) == 0
+    names = sorted(path.name for path in reports.iterdir())
+    assert names == [
+        "cv_comparison.md",
+        "cv_metrics.json",
+        "holdout_ridge.json",
+        "holdout_ridge.md",
+    ]
+    assert "wrote" in capsys.readouterr().out
+
+
+def test_synthetic_runs_skip_the_configured_report_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    reports = tmp_path / "reports"
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "split:\n  cv_folds: 3\n  min_train_years: 5\n"
+        f"output:\n  report_dir: {reports}\n",
+        encoding="utf-8",
+    )
+    assert main(["evaluate", "--config", str(config), "--synthetic", N_TITLES]) == 0
+    assert not reports.exists()
+    assert "wrote" not in capsys.readouterr().out
+
+
+def test_csv_runs_write_to_the_configured_report_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    reports = tmp_path / "reports"
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "split:\n  cv_folds: 3\n  min_train_years: 5\n"
+        f"output:\n  report_dir: {reports}\n",
+        encoding="utf-8",
+    )
+    csv = tmp_path / "extract.csv"
+    make_synthetic(SyntheticSpec(n_titles=int(N_TITLES)), seed=2).to_csv(
+        csv, index=False
+    )
+    argv = ["evaluate", "--config", str(config), "--data", str(csv)]
+    assert main([*argv, "--models", "global_median"]) == 0
+    assert (reports / "cv_comparison.md").is_file()

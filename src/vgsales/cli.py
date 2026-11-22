@@ -8,8 +8,10 @@ and never reads the holdout.
 the holdout of the latest release years and saves the fitted estimator.
 
 Both commands read the extract from ``data.raw_path`` unless ``--data`` or
-``--synthetic`` is given. Scores computed on synthetic data describe the
-generator, not the market, and are labelled as such.
+``--synthetic`` is given, and write JSON and markdown reports to
+``output.report_dir``. Scores computed on synthetic data describe the
+generator, not the market; they are labelled as such and written only to an
+explicit ``--report-dir``.
 """
 
 from __future__ import annotations
@@ -33,6 +35,11 @@ from vgsales.data.synthetic import SyntheticSpec, make_synthetic
 from vgsales.dataset import Dataset, load_dataset, prepare_dataset
 from vgsales.evaluation.cv import comparison_table, cross_validate
 from vgsales.evaluation.metrics import PRIMARY_METRIC, regression_metrics
+from vgsales.evaluation.reports import (
+    SYNTHETIC,
+    write_cv_report,
+    write_holdout_report,
+)
 from vgsales.features.prerelease import GROUP_COLUMN
 from vgsales.models.baselines import make_baseline
 from vgsales.models.target import with_target_transform
@@ -50,16 +57,33 @@ def build_model(name: str, config: Config) -> BaseEstimator:
 def _dataset(args: argparse.Namespace, config: Config) -> tuple[Dataset, str]:
     if args.synthetic is not None:
         raw = make_synthetic(SyntheticSpec(n_titles=args.synthetic), seed=config.seed)
-        return prepare_dataset(raw, config), "synthetic"
+        return prepare_dataset(raw, config), SYNTHETIC
     path = Path(args.data or config.data.raw_path)
     return load_dataset(config, path), str(path)
+
+
+def _report_dir(args: argparse.Namespace, config: Config, source: str) -> Path | None:
+    if args.report_dir is not None:
+        return args.report_dir
+    if source == SYNTHETIC:
+        return None
+    return Path(config.output.report_dir)
+
+
+def _metadata(config: Config, dataset: Dataset, source: str) -> dict[str, Any]:
+    return {
+        "source": source,
+        "version": __version__,
+        "config": config.to_dict(),
+        "dataset": dataset.summary(),
+    }
 
 
 def _print_header(dataset: Dataset, source: str) -> None:
     summary = dataset.summary()
     dev, test = summary["development"], summary["holdout"]
     print(f"vgsales {__version__}; source: {source}")
-    if source == "synthetic":
+    if source == SYNTHETIC:
         print("synthetic data: scores describe the generator, not the market")
     print(
         f"development: {dev['n_rows']} rows, {dev['first_year']}-{dev['last_year']}; "
@@ -89,6 +113,10 @@ def _evaluate(args: argparse.Namespace, config: Config) -> int:
     table = comparison_table(results).loc[:, columns]
     print("\ncross-validation scores (sales in millions of units):")
     print(table.to_string(float_format="{:.4f}".format))
+    directory = _report_dir(args, config, source)
+    if directory is not None:
+        paths = write_cv_report(results, directory, _metadata(config, dataset, source))
+        print("\nwrote " + ", ".join(str(path) for path in paths))
     return 0
 
 
@@ -116,17 +144,14 @@ def _train(args: argparse.Namespace, config: Config) -> int:
 
     output = Path(args.output or Path(config.output.model_dir) / f"{name}.joblib")
     output.parent.mkdir(parents=True, exist_ok=True)
-    artifact: dict[str, Any] = {
-        "model": model,
-        "name": name,
-        "version": __version__,
-        "source": source,
-        "config": config.to_dict(),
-        "dataset": dataset.summary(),
-        "holdout_scores": scores,
-    }
+    metadata = _metadata(config, dataset, source)
+    artifact = {"model": model, "name": name, **metadata, "holdout_scores": scores}
     joblib.dump(artifact, output)
     print(f"\nsaved {output}")
+    directory = _report_dir(args, config, source)
+    if directory is not None:
+        paths = write_holdout_report(name, scores, directory, metadata)
+        print("wrote " + ", ".join(str(path) for path in paths))
     return 0
 
 
@@ -152,6 +177,12 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         metavar="N_TITLES",
         help="use the synthetic generator with this many titles",
+    )
+    common.add_argument(
+        "--report-dir",
+        type=Path,
+        help="directory for JSON and markdown reports (default: output.report_dir; "
+        "synthetic runs write reports only when this is set)",
     )
     common.add_argument("-v", "--verbose", action="store_true", help="log progress")
 

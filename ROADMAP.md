@@ -97,7 +97,6 @@ by one or more items below.
 
 ## Phase 3: Evaluation framework and baselines
 
-- [ ] 3.5 Add a report writer for JSON metrics and markdown comparison tables under `reports/`.
 
 ## Phase 4: Gradient boosting
 
@@ -187,3 +186,4 @@ by one or more items below.
 - [x] 2026-11-22: 3.3 Add baselines: global median, genre-by-platform median, and ridge regression on one-hot features.
 - [x] 2026-11-22: 3.4a Add dataset preparation (coercion, cleaning, scope, features, holdout split) and a `models` configuration section consumed by the baseline factory.
 - [x] 2026-11-22: 3.4b Add a command-line entry point (`vgsales train`, `vgsales evaluate`) driven by the configuration.
+- [x] 2026-11-22: 3.5 Add a report writer for JSON metrics and markdown comparison tables under `reports/`.
