@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, fields
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, field, fields
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -123,6 +124,57 @@ class FeatureConfig:
             raise ValueError("features.target_encoding_smoothing must be >= 0")
 
 
+def _default_model_params() -> dict[str, dict[str, Any]]:
+    return {"group_median": {"min_count": 5}, "ridge": {"alpha": 1.0}}
+
+
+@dataclass(frozen=True)
+class ModelConfig:
+    """Models to compare and to fit, with their hyperparameters.
+
+    ``evaluate`` lists the models compared under cross-validation and
+    ``train`` names the model fitted on all development years. ``params``
+    maps a model name to keyword arguments of its estimator. Names are
+    checked against the model factory when the models are built.
+    """
+
+    evaluate: tuple[str, ...] = ("global_median", "group_median", "ridge")
+    train: str = "ridge"
+    params: dict[str, dict[str, Any]] = field(default_factory=_default_model_params)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "evaluate", tuple(self.evaluate))
+        if not self.evaluate:
+            raise ValueError("models.evaluate must name at least one model")
+        if len(set(self.evaluate)) != len(self.evaluate):
+            raise ValueError(f"models.evaluate has duplicates: {self.evaluate}")
+        if not isinstance(self.train, str) or not self.train:
+            raise TypeError("models.train must be a model name")
+        if not isinstance(self.params, Mapping):
+            raise TypeError("models.params must be a mapping")
+        params = {}
+        for name, values in self.params.items():
+            if not isinstance(values, Mapping):
+                raise TypeError(f"models.params.{name} must be a mapping")
+            params[name] = dict(values)
+        unused = sorted(set(params) - {*self.evaluate, self.train})
+        if unused:
+            raise ValueError(f"models.params given for unlisted models: {unused}")
+        object.__setattr__(self, "params", params)
+
+    def params_for(self, name: str) -> dict[str, Any]:
+        """Return a copy of the keyword arguments configured for ``name``."""
+        return dict(self.params.get(name, {}))
+
+
+@dataclass(frozen=True)
+class OutputConfig:
+    """Directories for fitted models and generated reports."""
+
+    model_dir: str = "models"
+    report_dir: str = "reports"
+
+
 @dataclass(frozen=True)
 class Config:
     """Full pipeline configuration."""
@@ -132,6 +184,8 @@ class Config:
     target: TargetConfig = TargetConfig()
     split: SplitConfig = SplitConfig()
     features: FeatureConfig = FeatureConfig()
+    models: ModelConfig = field(default_factory=ModelConfig)
+    output: OutputConfig = OutputConfig()
 
     def to_dict(self) -> dict[str, Any]:
         """Return the configuration as plain Python types."""
@@ -143,6 +197,8 @@ _SECTIONS: dict[str, type] = {
     "target": TargetConfig,
     "split": SplitConfig,
     "features": FeatureConfig,
+    "models": ModelConfig,
+    "output": OutputConfig,
 }
 
 
@@ -164,8 +220,9 @@ def config_from_dict(raw: dict[str, Any]) -> Config:
     Parameters
     ----------
     raw : dict
-        Mapping with optional keys ``seed``, ``data``, ``target``, ``split`` and
-        ``features``. Missing keys take their default values.
+        Mapping with optional keys ``seed``, ``data``, ``target``, ``split``,
+        ``features``, ``models`` and ``output``. Missing keys take their
+        default values.
 
     Returns
     -------

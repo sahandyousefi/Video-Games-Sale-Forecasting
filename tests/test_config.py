@@ -85,3 +85,43 @@ def test_unquoted_yaml_date_is_normalised(tmp_path: Path) -> None:
     path = tmp_path / "dated.yaml"
     path.write_text("data:\n  snapshot_date: 2024-06-30\n", encoding="utf-8")
     assert load_config(path).data.snapshot_date == "2024-06-30"
+
+
+def test_model_section_defaults() -> None:
+    models = load_config().models
+    assert models.evaluate == ("global_median", "group_median", "ridge")
+    assert models.train == "ridge"
+    assert models.params_for("ridge") == {"alpha": 1.0}
+    assert models.params_for("global_median") == {}
+
+
+def test_model_params_are_copied() -> None:
+    models = load_config().models
+    models.params_for("ridge")["alpha"] = 99.0
+    assert models.params_for("ridge") == {"alpha": 1.0}
+
+
+def test_model_section_from_mapping() -> None:
+    cfg = config_from_dict(
+        {"models": {"evaluate": ["ridge"], "train": "ridge", "params": {}}}
+    )
+    assert cfg.models.evaluate == ("ridge",)
+    assert cfg.models.params == {}
+    assert cfg.output.model_dir == "models"
+
+
+@pytest.mark.parametrize(
+    ("raw", "error"),
+    [
+        ({"models": {"evaluate": []}}, ValueError),
+        ({"models": {"evaluate": ["ridge", "ridge"]}}, ValueError),
+        ({"models": {"params": {"xgboost": {"max_depth": 3}}}}, ValueError),
+        ({"models": {"params": {"ridge": 1.0}}}, TypeError),
+        ({"models": {"params": [1]}}, TypeError),
+        ({"models": {"train": ""}}, TypeError),
+        ({"output": {"figures": "x"}}, ValueError),
+    ],
+)
+def test_invalid_model_and_output_sections(raw: dict, error: type) -> None:
+    with pytest.raises(error):
+        config_from_dict(raw)

@@ -17,6 +17,9 @@ release years that the model has not seen.
 |-- notebooks/                 exploration and walkthrough notebooks
 |-- reports/figures/           generated figures
 |-- src/vgsales/
+|   |-- config.py              typed configuration loader
+|   |-- dataset.py             raw extract to features, target and holdout split
+|   |-- cli.py                 command-line entry point (train, evaluate)
 |   |-- data/                  schema, loading, cleaning, splits, profiling, synthetic data
 |   |-- features/              leakage-safe encoders, pre-release features
 |   |-- models/                target transform, baselines, gradient boosting, PyTorch models
@@ -94,7 +97,7 @@ by one or more items below.
 
 ## Phase 3: Evaluation framework and baselines
 
-- [ ] 3.4 Add a command-line entry point (`vgsales train`, `vgsales evaluate`) driven by the configuration.
+- [ ] 3.4b Add a command-line entry point (`vgsales train`, `vgsales evaluate`) driven by the configuration.
 - [ ] 3.5 Add a report writer for JSON metrics and markdown comparison tables under `reports/`.
 
 ## Phase 4: Gradient boosting
@@ -183,3 +186,4 @@ by one or more items below.
 - [x] 2026-11-22: 3.1 Implement metrics on the log and original scales (RMSLE, MAE, median absolute error, R^2) with tests.
 - [x] 2026-11-22: 3.2 Implement the cross-validation runner that returns per-fold and aggregate metric tables.
 - [x] 2026-11-22: 3.3 Add baselines: global median, genre-by-platform median, and ridge regression on one-hot features.
+- [x] 2026-11-22: 3.4a Add dataset preparation (coercion, cleaning, scope, features, holdout split) and a `models` configuration section consumed by the baseline factory.

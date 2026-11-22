@@ -138,6 +138,16 @@ def test_informed_baselines_beat_the_global_median_on_synthetic_data(
     assert pooled["group_median"] <= pooled["global_median"] * 1.05
 
 
+def test_parameters_reach_the_final_estimator() -> None:
+    ridge = make_baseline("ridge", alpha=3.0, fit_intercept=False)
+    assert ridge[-1].get_params()["alpha"] == 3.0
+    assert ridge[-1].get_params()["fit_intercept"] is False
+    group = make_baseline("group_median", min_count=2)
+    assert group[-1].min_count == 2
+    with pytest.raises(ValueError, match="no parameters"):
+        make_baseline("global_median", strategy="mean")
+
+
 def test_unknown_baseline() -> None:
     with pytest.raises(ValueError, match="unknown baseline"):
         make_baseline("mean")

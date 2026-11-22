@@ -39,3 +39,19 @@ features:
     - critic_missing
   min_category_count: 5
   target_encoding_smoothing: 20.0
+
+models:
+  # Compared under expanding-window cross-validation by `vgsales evaluate`.
+  evaluate: [global_median, group_median, ridge]
+  # Fitted on all development years by `vgsales train`.
+  train: ridge
+  # Keyword arguments of each model's estimator.
+  params:
+    group_median:
+      min_count: 5
+    ridge:
+      alpha: 1.0
+
+output:
+  model_dir: models
+  report_dir: reports
