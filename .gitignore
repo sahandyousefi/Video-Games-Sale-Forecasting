@@ -19,7 +19,7 @@ htmlcov/
 data/raw/
 data/interim/
 data/processed/
-models/
+/models/
 mlruns/
 mlartifacts/
 optuna*.db
