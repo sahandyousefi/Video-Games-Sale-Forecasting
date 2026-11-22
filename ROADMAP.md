@@ -94,7 +94,6 @@ by one or more items below.
 
 ## Phase 3: Evaluation framework and baselines
 
-- [ ] 3.1 Implement metrics on the log and original scales (RMSLE, MAE, median absolute error, R^2) with tests.
 - [ ] 3.2 Implement the cross-validation runner that returns per-fold and aggregate metric tables.
 - [ ] 3.3 Add baselines: global median, genre-by-platform median, and ridge regression on one-hot features.
 - [ ] 3.4 Add a command-line entry point (`vgsales train`, `vgsales evaluate`) driven by the configuration.
@@ -183,3 +182,4 @@ by one or more items below.
 - [x] 2026-11-21: 2.10 Move the original notebook to `notebooks/00_original_exploration.ipynb` with a header cell that lists the known issues.
 - [x] 2026-11-21: 2.11a Add descriptive profiling in `vgsales.data.profiling`: missingness, coverage by release year, target summary on both scales, censoring comparison.
 - [x] 2026-11-21: 2.11b Add `notebooks/01_eda.ipynb` built on the package: target distribution, coverage by release year, missingness, censoring.
+- [x] 2026-11-22: 3.1 Implement metrics on the log and original scales (RMSLE, MAE, median absolute error, R^2) with tests.
