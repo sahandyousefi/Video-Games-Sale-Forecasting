@@ -26,7 +26,11 @@ from numpy.typing import ArrayLike
 from sklearn.base import BaseEstimator, clone
 
 from vgsales.data.splits import ExpandingWindowSplit, Fold, describe_folds
-from vgsales.evaluation.metrics import METRIC_NAMES, regression_metrics
+from vgsales.evaluation.metrics import (
+    METRIC_NAMES,
+    PRIMARY_METRIC,
+    regression_metrics,
+)
 from vgsales.models.target import with_target_transform
 
 FOLD_COLUMN = "fold"
@@ -192,3 +196,32 @@ def cross_validate(
         predictions=pd.concat(predictions),
         metrics=tuple(metrics),
     )
+
+
+def comparison_table(results: dict[str, CVResult]) -> pd.DataFrame:
+    """Tabulate fold mean, fold standard deviation and pooled scores.
+
+    Parameters
+    ----------
+    results : dict of str to CVResult
+        Cross-validation results keyed by model name.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per model with columns ``<metric>_mean``, ``<metric>_std``
+        and ``<metric>_pooled``, sorted by the pooled primary metric when it
+        was computed.
+    """
+    rows = {}
+    for name, result in results.items():
+        summary = result.summary()
+        rows[name] = {
+            f"{metric}_{stat}": summary.loc[stat, metric]
+            for metric in result.metrics
+            for stat in ("mean", "std", "pooled")
+        }
+    table = pd.DataFrame.from_dict(rows, orient="index")
+    table.index.name = "model"
+    key = f"{PRIMARY_METRIC}_pooled"
+    return table.sort_values(key) if key in table.columns else table

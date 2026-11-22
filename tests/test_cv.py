@@ -15,7 +15,12 @@ from vgsales.data.schema import TARGET
 from vgsales.data.splits import ExpandingWindowSplit, Fold, expanding_window_folds
 from vgsales.data.synthetic import SyntheticSpec, make_synthetic
 from vgsales.data.temporal import apply_release_scope
-from vgsales.evaluation.cv import AGGREGATE_ROWS, CVResult, cross_validate
+from vgsales.evaluation.cv import (
+    AGGREGATE_ROWS,
+    CVResult,
+    comparison_table,
+    cross_validate,
+)
 from vgsales.evaluation.metrics import METRIC_NAMES, regression_metrics
 from vgsales.features.pipeline import make_preprocessor
 from vgsales.features.prerelease import GROUP_COLUMN, build_prerelease_features
@@ -206,3 +211,22 @@ def test_target_wrapper() -> None:
     assert math.isclose(wrapped.regressor_.coef_[0], 0.1, rel_tol=1e-6)
     with pytest.raises(ValueError, match="transform"):
         with_target_transform(model, "sqrt")
+
+
+def test_comparison_table_sorts_by_primary_metric(
+    data: tuple[pd.DataFrame, np.ndarray], splitter: ExpandingWindowSplit
+) -> None:
+    X, y = data
+    results = {
+        "dummy": cross_validate(DummyRegressor(), X, y, splitter),
+        "ridge": cross_validate(
+            make_pipeline(make_preprocessor(scale=True), Ridge()), X, y, splitter
+        ),
+    }
+    table = comparison_table(results)
+    assert table.index.name == "model"
+    assert set(table.index) == {"dummy", "ridge"}
+    assert table["rmsle_pooled"].is_monotonic_increasing
+    assert {"rmsle_mean", "rmsle_std", "r2_pooled"} <= set(table.columns)
+    ridge = results["ridge"].summary()
+    assert table.loc["ridge", "mae_mean"] == pytest.approx(ridge.loc["mean", "mae"])
