@@ -95,6 +95,10 @@ def test_cv_record_matches_results(setup: tuple[dict[str, CVResult], dict]) -> N
         expected.loc["pooled", "rmsle"]
     )
     assert record["metadata"]["source"] == "synthetic"
+    paired = record["paired_tests"]
+    assert paired["metric"] == "rmsle"
+    (name,) = paired["tests"]
+    assert paired["tests"][name]["n_folds"] == 3
 
 
 def test_cv_markdown_content(setup: tuple[dict[str, CVResult], dict]) -> None:
@@ -107,6 +111,8 @@ def test_cv_markdown_content(setup: tuple[dict[str, CVResult], dict]) -> None:
     ridge_line = next(line for line in text.splitlines() if line.startswith("| ridge"))
     pooled = results["ridge"].summary().loc["pooled", "rmsle"]
     assert f"{pooled:.4f}" in ridge_line
+    assert "## Paired comparison" in text
+    assert "smallest attainable p-value is 0.2500" in text
     with pytest.raises(ValueError, match="empty"):
         cv_markdown({})
 
@@ -144,7 +150,10 @@ def test_undefined_spread_is_null_in_json(
     json_path, md_path = write_cv_report(single, tmp_path, metadata)
     record = json.loads(json_path.read_text(encoding="utf-8"))
     assert record["models"]["dummy"]["summary"]["std"]["rmsle"] is None
-    assert "(n/a)" in md_path.read_text(encoding="utf-8")
+    assert "paired_tests" not in record
+    text = md_path.read_text(encoding="utf-8")
+    assert "(n/a)" in text
+    assert "Paired comparison" not in text
 
 
 def test_write_holdout_report(tmp_path: Path) -> None:

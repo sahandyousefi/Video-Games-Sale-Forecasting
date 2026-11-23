@@ -100,7 +100,6 @@ by one or more items below.
 
 ## Phase 4: Gradient boosting
 
-- [ ] 4.5 Add a paired Wilcoxon signed-rank test on per-fold errors to the comparison report.
 
 ## Phase 5: Deep learning (PyTorch)
 
@@ -187,3 +186,4 @@ by one or more items below.
 - [x] 2026-11-23: 4.2 Add a LightGBM regressor with native categorical handling.
 - [x] 2026-11-23: 4.3 Add a CatBoost regressor with ordered target statistics.
 - [x] 2026-11-23: 4.4 Add a model registry and compare baselines and boosting models on identical folds.
+- [x] 2026-11-23: 4.5 Add a paired Wilcoxon signed-rank test on per-fold errors to the comparison report.

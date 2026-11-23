@@ -39,6 +39,7 @@ def test_evaluate_on_synthetic_data(capsys: pytest.CaptureFixture[str]) -> None:
     for name in load_config().models.evaluate:
         assert name in out
     assert "rmsle_pooled" in out
+    assert "paired Wilcoxon signed-rank tests of per-fold rmsle" in out
 
 
 def test_evaluate_model_subset_and_custom_config(

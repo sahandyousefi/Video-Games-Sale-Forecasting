@@ -4,7 +4,10 @@ Every report carries the metadata needed to reproduce it: the package
 version, the data source, the configuration and the sizes and year ranges of
 the development and holdout sets. JSON files hold all metrics at full
 precision, with undefined values (for example the spread of a single fold)
-written as ``null``. Markdown files hold the tables meant for reading.
+written as ``null``. Markdown files hold the tables meant for reading. When
+two or more models are compared on two or more folds, the cross-validation
+report adds paired Wilcoxon signed-rank tests of the per-fold primary metric
+against the best model (:mod:`vgsales.evaluation.significance`).
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ import pandas as pd
 
 from vgsales.evaluation.cv import CVResult, comparison_table
 from vgsales.evaluation.metrics import GREATER_IS_BETTER, PRIMARY_METRIC
+from vgsales.evaluation.significance import paired_comparison
 
 CV_JSON = "cv_metrics.json"
 CV_MARKDOWN = "cv_comparison.md"
@@ -166,6 +170,51 @@ def _score_table(results: Mapping[str, CVResult]) -> pd.DataFrame:
     return out
 
 
+def paired_tests(results: Mapping[str, CVResult]) -> pd.DataFrame | None:
+    """Paired tests of the primary metric against the best model.
+
+    Returns
+    -------
+    pandas.DataFrame or None
+        Output of :func:`vgsales.evaluation.significance.paired_comparison`,
+        or None when fewer than two models or two folds are available.
+    """
+    if len(results) < 2:
+        return None
+    first = next(iter(results.values()))
+    if len(first.per_fold) < 2 or PRIMARY_METRIC not in first.metrics:
+        return None
+    return paired_comparison(results, PRIMARY_METRIC)
+
+
+def _paired_section(table: pd.DataFrame) -> list[str]:
+    label = _LABELS[PRIMARY_METRIC]
+    reference = table["reference"].iloc[0]
+    n_folds = int(table["n_folds"].iloc[0])
+    out = pd.DataFrame(index=table.index)
+    out["folds better"] = [
+        f"{better}/{n}"
+        for better, n in zip(table["n_better"], table["n_folds"], strict=True)
+    ]
+    out["median difference"] = table["median_diff"]
+    out["W+"] = [f"{w:g}" for w in table["statistic"]]
+    out["p"] = table["p_value"]
+    out["p (Holm)"] = table["p_holm"]
+    text = (
+        f"The {label} of each fold is paired with that of {reference}, the "
+        f"model with the best pooled {label}. Folds better counts the "
+        f"validation years on which a model scores better than {reference}; "
+        "the median difference is taken over folds, model minus reference. "
+        "p is the two-sided Wilcoxon signed-rank p-value and p (Holm) adjusts "
+        f"it for the {len(table)} comparisons. With {n_folds} folds the "
+        f"smallest attainable p-value is {2.0 ** (1 - n_folds):.4f}. The folds "
+        "share training years, so the p-values describe how consistently the "
+        "ranking holds across validation years rather than the significance "
+        "of a difference in generalization error."
+    )
+    return ["## Paired comparison", text, markdown_table(out)]
+
+
 def cv_markdown(
     results: Mapping[str, CVResult], metadata: Mapping[str, Any] | None = None
 ) -> str:
@@ -203,6 +252,9 @@ def cv_markdown(
         f"{_LABELS[PRIMARY_METRIC]}. Lower is better except for {better}.",
         markdown_table(_score_table(results)),
     ]
+    paired = paired_tests(results)
+    if paired is not None:
+        sections += _paired_section(paired)
     return "\n\n".join(sections) + "\n"
 
 
@@ -217,7 +269,15 @@ def cv_record(
         }
         for name, result in results.items()
     }
-    return to_jsonable({"metadata": dict(metadata or {}), "models": models})
+    record: dict[str, Any] = {"metadata": dict(metadata or {}), "models": models}
+    paired = paired_tests(results)
+    if paired is not None:
+        record["paired_tests"] = {
+            "metric": PRIMARY_METRIC,
+            "test": "wilcoxon_signed_rank",
+            "tests": paired.to_dict(orient="index"),
+        }
+    return to_jsonable(record)
 
 
 def _write(path: Path, text: str) -> Path:

@@ -39,6 +39,7 @@ from vgsales.evaluation.cv import compare_models, comparison_table
 from vgsales.evaluation.metrics import PRIMARY_METRIC, regression_metrics
 from vgsales.evaluation.reports import (
     SYNTHETIC,
+    paired_tests,
     write_cv_report,
     write_holdout_report,
 )
@@ -122,6 +123,15 @@ def _evaluate(args: argparse.Namespace, config: Config) -> int:
     table = comparison_table(results).loc[:, columns]
     print("\ncross-validation scores (sales in millions of units):")
     print(table.to_string(float_format="{:.4f}".format))
+    paired = paired_tests(results)
+    if paired is not None:
+        reference = paired["reference"].iloc[0]
+        print(
+            f"\npaired Wilcoxon signed-rank tests of per-fold {PRIMARY_METRIC} "
+            f"against {reference}:"
+        )
+        columns = ["n_better", "n_folds", "median_diff", "p_value", "p_holm"]
+        print(paired.loc[:, columns].to_string(float_format="{:.4f}".format))
     directory = _report_dir(args, config, source)
     if directory is not None:
         metadata = _metadata(config, dataset, source)
