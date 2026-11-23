@@ -18,6 +18,8 @@ from vgsales.data.temporal import apply_release_scope
 from vgsales.evaluation.cv import (
     AGGREGATE_ROWS,
     CVResult,
+    check_same_folds,
+    compare_models,
     comparison_table,
     cross_validate,
 )
@@ -230,3 +232,37 @@ def test_comparison_table_sorts_by_primary_metric(
     assert {"rmsle_mean", "rmsle_std", "r2_pooled"} <= set(table.columns)
     ridge = results["ridge"].summary()
     assert table.loc["ridge", "mae_mean"] == pytest.approx(ridge.loc["mean", "mae"])
+
+
+def test_compare_models_pairs_every_fold(
+    data: tuple[pd.DataFrame, np.ndarray], splitter: ExpandingWindowSplit
+) -> None:
+    X, y = data
+    estimators = {
+        "mean": DummyRegressor(strategy="mean"),
+        "median": DummyRegressor(strategy="median"),
+        "latest": MaxTrainYear(),
+    }
+    results = compare_models(estimators, X, y, splitter, target_transform="identity")
+    assert list(results) == ["mean", "median", "latest"]
+    check_same_folds(results)
+    reference = cross_validate(
+        DummyRegressor(strategy="median"), X, y, splitter, target_transform="identity"
+    )
+    pd.testing.assert_frame_equal(results["median"].predictions, reference.predictions)
+    with pytest.raises(ValueError, match="must not be empty"):
+        compare_models({}, X, y, splitter)
+
+
+def test_results_on_different_folds_are_not_compared(
+    data: tuple[pd.DataFrame, np.ndarray], splitter: ExpandingWindowSplit
+) -> None:
+    X, y = data
+    full = cross_validate(DummyRegressor(), X, y, splitter)
+    shorter = cross_validate(DummyRegressor(), X, y, splitter.folds(X)[1:])
+    with pytest.raises(ValueError, match="not evaluated on the same folds"):
+        comparison_table({"full": full, "shorter": shorter})
+    moved = full.predictions.assign(fold=full.predictions["fold"].iloc[::-1].to_numpy())
+    relabelled = CVResult(full.per_fold, moved, full.metrics)
+    with pytest.raises(ValueError, match="same folds"):
+        check_same_folds({"full": full, "relabelled": relabelled})

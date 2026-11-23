@@ -1,8 +1,10 @@
 """Command-line entry point.
 
 ``vgsales evaluate`` compares the configured models under expanding-window
-cross-validation on the development years. It is the model selection step
-and never reads the holdout.
+cross-validation on the development years, all on the same folds. It is the
+model selection step and never reads the holdout. Configured models whose
+optional library is not installed are skipped with a note; models named with
+``--models`` must be available.
 
 ``vgsales train`` fits one model on all development years, scores it once on
 the holdout of the latest release years and saves the fitted estimator.
@@ -33,7 +35,7 @@ from vgsales.config import DEFAULT_CONFIG_PATH, Config, load_config
 from vgsales.data.splits import ExpandingWindowSplit
 from vgsales.data.synthetic import SyntheticSpec, make_synthetic
 from vgsales.dataset import Dataset, load_dataset, prepare_dataset
-from vgsales.evaluation.cv import comparison_table, cross_validate
+from vgsales.evaluation.cv import compare_models, comparison_table
 from vgsales.evaluation.metrics import PRIMARY_METRIC, regression_metrics
 from vgsales.evaluation.reports import (
     SYNTHETIC,
@@ -41,17 +43,30 @@ from vgsales.evaluation.reports import (
     write_holdout_report,
 )
 from vgsales.features.prerelease import GROUP_COLUMN
-from vgsales.models.baselines import make_baseline
+from vgsales.models.registry import is_available, make_model, missing_dependency
 from vgsales.models.target import with_target_transform
-
-logger = logging.getLogger("vgsales")
 
 SUMMARY_METRICS = ("rmsle", "mae_log", "r2_log", "rmse", "mae")
 
 
 def build_model(name: str, config: Config) -> BaseEstimator:
     """Build the unfitted model ``name`` with its configured parameters."""
-    return make_baseline(name, config.features, **config.models.params_for(name))
+    return make_model(name, config)
+
+
+def _models_to_evaluate(
+    args: argparse.Namespace, config: Config
+) -> tuple[dict[str, BaseEstimator], list[str]]:
+    if args.models:
+        return {name: build_model(name, config) for name in args.models}, []
+    names = config.models.evaluate
+    skipped = [name for name in names if not is_available(name)]
+    for name in skipped:
+        print(f"skipped {name}: {missing_dependency(name)}")
+    models = {name: build_model(name, config) for name in names if name not in skipped}
+    if not models:
+        raise ValueError("none of the configured models is available")
+    return models, skipped
 
 
 def _dataset(args: argparse.Namespace, config: Config) -> tuple[Dataset, str]:
@@ -93,18 +108,12 @@ def _print_header(dataset: Dataset, source: str) -> None:
 
 
 def _evaluate(args: argparse.Namespace, config: Config) -> int:
-    names = tuple(args.models or config.models.evaluate)
-    models = {name: build_model(name, config) for name in names}
+    models, skipped = _models_to_evaluate(args, config)
     dataset, source = _dataset(args, config)
     _print_header(dataset, source)
     X, y = dataset.development()
     cv = ExpandingWindowSplit.from_config(config.split, group_column=GROUP_COLUMN)
-    results = {}
-    for name, model in models.items():
-        logger.info("cross-validating %s", name)
-        results[name] = cross_validate(
-            model, X, y, cv, target_transform=config.target.transform
-        )
+    results = compare_models(models, X, y, cv, target_transform=config.target.transform)
     folds = next(iter(results.values())).per_fold
     print("\nfolds:")
     print(folds.loc[:, "fold":"n_purged"].to_string(index=False))
@@ -115,7 +124,10 @@ def _evaluate(args: argparse.Namespace, config: Config) -> int:
     print(table.to_string(float_format="{:.4f}".format))
     directory = _report_dir(args, config, source)
     if directory is not None:
-        paths = write_cv_report(results, directory, _metadata(config, dataset, source))
+        metadata = _metadata(config, dataset, source)
+        if skipped:
+            metadata["skipped_models"] = skipped
+        paths = write_cv_report(results, directory, metadata)
         print("\nwrote " + ", ".join(str(path) for path in paths))
     return 0
 
@@ -216,7 +228,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         config = load_config(args.config)
         return args.handler(args, config)
-    except (FileNotFoundError, ValueError, TypeError) as error:
+    except (FileNotFoundError, ImportError, ValueError, TypeError) as error:
         if args.verbose:
             raise
         print(f"vgsales: error: {error}", file=sys.stderr)

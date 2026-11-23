@@ -22,7 +22,7 @@ release years that the model has not seen.
 |   |-- cli.py                 command-line entry point (train, evaluate)
 |   |-- data/                  schema, loading, cleaning, splits, profiling, synthetic data
 |   |-- features/              leakage-safe encoders, pre-release features
-|   |-- models/                target transform, baselines, gradient boosting, PyTorch models
+|   |-- models/                target transform, baselines, gradient boosting, registry, PyTorch models
 |   |-- tuning/                Optuna search with time-series CV
 |   |-- evaluation/            metrics, cross-validation runner, reports
 |   |-- explain/               SHAP and permutation importance
@@ -100,7 +100,6 @@ by one or more items below.
 
 ## Phase 4: Gradient boosting
 
-- [ ] 4.4 Add a model registry and compare baselines and boosting models on identical folds.
 - [ ] 4.5 Add a paired Wilcoxon signed-rank test on per-fold errors to the comparison report.
 
 ## Phase 5: Deep learning (PyTorch)
@@ -187,3 +186,4 @@ by one or more items below.
 - [x] 2026-11-23: 4.1 Add an XGBoost regressor with early stopping on a temporal validation fold.
 - [x] 2026-11-23: 4.2 Add a LightGBM regressor with native categorical handling.
 - [x] 2026-11-23: 4.3 Add a CatBoost regressor with ordered target statistics.
+- [x] 2026-11-23: 4.4 Add a model registry and compare baselines and boosting models on identical folds.

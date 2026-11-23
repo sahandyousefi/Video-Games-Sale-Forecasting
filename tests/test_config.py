@@ -89,7 +89,14 @@ def test_unquoted_yaml_date_is_normalised(tmp_path: Path) -> None:
 
 def test_model_section_defaults() -> None:
     models = load_config().models
-    assert models.evaluate == ("global_median", "group_median", "ridge")
+    assert models.evaluate == (
+        "global_median",
+        "group_median",
+        "ridge",
+        "xgboost",
+        "lightgbm",
+        "catboost",
+    )
     assert models.train == "ridge"
     assert models.params_for("ridge") == {"alpha": 1.0}
     assert models.params_for("global_median") == {}
@@ -99,6 +106,13 @@ def test_model_params_are_copied() -> None:
     models = load_config().models
     models.params_for("ridge")["alpha"] = 99.0
     assert models.params_for("ridge") == {"alpha": 1.0}
+
+
+def test_omitted_params_default_to_the_listed_models() -> None:
+    cfg = config_from_dict({"models": {"evaluate": ["global_median", "xgboost"]}})
+    assert set(cfg.models.params) == {"xgboost", "ridge"}
+    assert cfg.models.params_for("xgboost")["n_estimators"] == 2000
+    assert cfg.models.params_for("global_median") == {}
 
 
 def test_model_section_from_mapping() -> None:
@@ -115,7 +129,10 @@ def test_model_section_from_mapping() -> None:
     [
         ({"models": {"evaluate": []}}, ValueError),
         ({"models": {"evaluate": ["ridge", "ridge"]}}, ValueError),
-        ({"models": {"params": {"xgboost": {"max_depth": 3}}}}, ValueError),
+        (
+            {"models": {"evaluate": ["ridge"], "params": {"xgboost": {"depth": 3}}}},
+            ValueError,
+        ),
         ({"models": {"params": {"ridge": 1.0}}}, TypeError),
         ({"models": {"params": [1]}}, TypeError),
         ({"models": {"train": ""}}, TypeError),

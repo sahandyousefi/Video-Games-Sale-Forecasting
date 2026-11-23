@@ -124,8 +124,28 @@ class FeatureConfig:
             raise ValueError("features.target_encoding_smoothing must be >= 0")
 
 
+def _boosting_params(**params: Any) -> dict[str, Any]:
+    return {
+        "n_estimators": 2000,
+        "learning_rate": 0.05,
+        "early_stopping_rounds": 100,
+        "validation_years": 2,
+        **params,
+    }
+
+
 def _default_model_params() -> dict[str, dict[str, Any]]:
-    return {"group_median": {"min_count": 5}, "ridge": {"alpha": 1.0}}
+    return {
+        "group_median": {"min_count": 5},
+        "ridge": {"alpha": 1.0},
+        "xgboost": _boosting_params(
+            max_depth=6, min_child_weight=5.0, subsample=0.8, colsample_bytree=0.8
+        ),
+        "lightgbm": _boosting_params(
+            num_leaves=31, min_child_samples=20, min_data_per_group=50
+        ),
+        "catboost": _boosting_params(depth=6, l2_leaf_reg=3.0),
+    }
 
 
 @dataclass(frozen=True)
@@ -134,13 +154,21 @@ class ModelConfig:
 
     ``evaluate`` lists the models compared under cross-validation and
     ``train`` names the model fitted on all development years. ``params``
-    maps a model name to keyword arguments of its estimator. Names are
-    checked against the model factory when the models are built.
+    maps a model name to keyword arguments of its estimator. When ``params``
+    is omitted, the default parameters of the listed models are used. Names
+    are checked against the model registry when the models are built.
     """
 
-    evaluate: tuple[str, ...] = ("global_median", "group_median", "ridge")
+    evaluate: tuple[str, ...] = (
+        "global_median",
+        "group_median",
+        "ridge",
+        "xgboost",
+        "lightgbm",
+        "catboost",
+    )
     train: str = "ridge"
-    params: dict[str, dict[str, Any]] = field(default_factory=_default_model_params)
+    params: dict[str, dict[str, Any]] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "evaluate", tuple(self.evaluate))
@@ -150,6 +178,12 @@ class ModelConfig:
             raise ValueError(f"models.evaluate has duplicates: {self.evaluate}")
         if not isinstance(self.train, str) or not self.train:
             raise TypeError("models.train must be a model name")
+        if self.params is None:
+            listed = {*self.evaluate, self.train}
+            defaults = _default_model_params()
+            object.__setattr__(
+                self, "params", {k: v for k, v in defaults.items() if k in listed}
+            )
         if not isinstance(self.params, Mapping):
             raise TypeError("models.params must be a mapping")
         params = {}
@@ -164,7 +198,7 @@ class ModelConfig:
 
     def params_for(self, name: str) -> dict[str, Any]:
         """Return a copy of the keyword arguments configured for ``name``."""
-        return dict(self.params.get(name, {}))
+        return dict((self.params or {}).get(name, {}))
 
 
 @dataclass(frozen=True)

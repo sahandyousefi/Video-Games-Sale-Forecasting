@@ -41,16 +41,43 @@ features:
   target_encoding_smoothing: 20.0
 
 models:
-  # Compared under expanding-window cross-validation by `vgsales evaluate`.
-  evaluate: [global_median, group_median, ridge]
+  # Compared on identical expanding-window folds by `vgsales evaluate`.
+  # Boosting models need the gbm extras and are skipped when not installed.
+  evaluate: [global_median, group_median, ridge, xgboost, lightgbm, catboost]
   # Fitted on all development years by `vgsales train`.
   train: ridge
-  # Keyword arguments of each model's estimator.
+  # Keyword arguments of each model's estimator. For boosting models,
+  # n_estimators is the maximum number of rounds; the number used is chosen
+  # by early stopping on the last validation_years of each training window.
   params:
     group_median:
       min_count: 5
     ridge:
       alpha: 1.0
+    xgboost:
+      n_estimators: 2000
+      learning_rate: 0.05
+      early_stopping_rounds: 100
+      validation_years: 2
+      max_depth: 6
+      min_child_weight: 5.0
+      subsample: 0.8
+      colsample_bytree: 0.8
+    lightgbm:
+      n_estimators: 2000
+      learning_rate: 0.05
+      early_stopping_rounds: 100
+      validation_years: 2
+      num_leaves: 31
+      min_child_samples: 20
+      min_data_per_group: 50
+    catboost:
+      n_estimators: 2000
+      learning_rate: 0.05
+      early_stopping_rounds: 100
+      validation_years: 2
+      depth: 6
+      l2_leaf_reg: 3.0
 
 output:
   model_dir: models

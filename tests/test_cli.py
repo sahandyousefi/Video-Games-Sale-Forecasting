@@ -1,3 +1,5 @@
+import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -180,3 +182,34 @@ def test_csv_runs_write_to_the_configured_report_dir(
     argv = ["evaluate", "--config", str(config), "--data", str(csv)]
     assert main([*argv, "--models", "global_median"]) == 0
     assert (reports / "cv_comparison.md").is_file()
+
+
+def test_unavailable_configured_models_are_skipped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    original = importlib.util.find_spec
+
+    def find_spec(name: str, *args: object) -> object:
+        return None if name == "xgboost" else original(name, *args)
+
+    monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "split:\n  cv_folds: 3\n  min_train_years: 5\n"
+        "models:\n  evaluate: [global_median, xgboost]\n",
+        encoding="utf-8",
+    )
+    reports = tmp_path / "reports"
+    common = ["evaluate", "--config", str(config), "--synthetic", N_TITLES]
+    assert main([*common, "--report-dir", str(reports)]) == 0
+    out = capsys.readouterr().out
+    assert "skipped xgboost: xgboost is not installed" in out
+    record = json.loads((reports / "cv_metrics.json").read_text(encoding="utf-8"))
+    assert list(record["models"]) == ["global_median"]
+    assert record["metadata"]["skipped_models"] == ["xgboost"]
+    assert "not evaluated" in (reports / "cv_comparison.md").read_text("utf-8")
+
+    assert main([*common, "--models", "xgboost"]) == 1
+    assert "unavailable" in capsys.readouterr().err

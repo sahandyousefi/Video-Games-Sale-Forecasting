@@ -16,8 +16,9 @@ disjoint, so each row contributes at most one out-of-fold prediction.
 
 from __future__ import annotations
 
+import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -35,6 +36,18 @@ from vgsales.models.target import with_target_transform
 
 FOLD_COLUMN = "fold"
 AGGREGATE_ROWS = ("mean", "std", "min", "max", "pooled")
+FOLD_KEYS = (
+    "fold",
+    "train_start",
+    "train_end",
+    "val_start",
+    "val_end",
+    "n_train",
+    "n_val",
+    "n_purged",
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -198,13 +211,94 @@ def cross_validate(
     )
 
 
-def comparison_table(results: dict[str, CVResult]) -> pd.DataFrame:
+def compare_models(
+    estimators: Mapping[str, BaseEstimator],
+    X: pd.DataFrame,
+    y: ArrayLike,
+    cv: ExpandingWindowSplit | Sequence[Fold],
+    *,
+    groups: ArrayLike | None = None,
+    target_transform: str = "log1p",
+    metrics: tuple[str, ...] = METRIC_NAMES,
+) -> dict[str, CVResult]:
+    """Cross-validate several estimators on one set of folds.
+
+    The folds are computed once and passed to :func:`cross_validate` for
+    every estimator, so all models are trained and validated on the same
+    rows and their per-fold scores are paired.
+
+    Parameters
+    ----------
+    estimators : mapping of str to estimator
+        Unfitted estimators keyed by model name.
+    X, y, cv, groups, target_transform, metrics
+        As in :func:`cross_validate`.
+
+    Returns
+    -------
+    dict of str to CVResult
+        Results in the order of ``estimators``.
+
+    Raises
+    ------
+    ValueError
+        If ``estimators`` is empty.
+    """
+    if not estimators:
+        raise ValueError("estimators must not be empty")
+    if not isinstance(X, pd.DataFrame):
+        raise TypeError("X must be a pandas DataFrame")
+    folds = _resolve_folds(cv, X, groups)
+    results = {}
+    for name, estimator in estimators.items():
+        logger.info("cross-validating %s on %d folds", name, len(folds))
+        results[name] = cross_validate(
+            estimator,
+            X,
+            y,
+            folds,
+            target_transform=target_transform,
+            metrics=metrics,
+        )
+    return results
+
+
+def check_same_folds(results: Mapping[str, CVResult]) -> None:
+    """Check that all results were computed on the same folds.
+
+    Two results share their folds when the year ranges and sizes of every
+    fold agree and every out-of-fold prediction comes from the same fold for
+    the same row.
+
+    Raises
+    ------
+    ValueError
+        If two results differ in their folds.
+    """
+    items = list(results.items())
+    if not items:
+        return
+    first_name, first = items[0]
+    reference = first.per_fold.loc[:, list(FOLD_KEYS)].reset_index(drop=True)
+    for name, result in items[1:]:
+        folds = result.per_fold.loc[:, list(FOLD_KEYS)].reset_index(drop=True)
+        same = folds.equals(reference) and result.predictions[FOLD_COLUMN].equals(
+            first.predictions[FOLD_COLUMN]
+        )
+        if not same:
+            raise ValueError(
+                f"{name} and {first_name} were not evaluated on the same folds"
+            )
+
+
+def comparison_table(results: Mapping[str, CVResult]) -> pd.DataFrame:
     """Tabulate fold mean, fold standard deviation and pooled scores.
 
     Parameters
     ----------
-    results : dict of str to CVResult
-        Cross-validation results keyed by model name.
+    results : mapping of str to CVResult
+        Cross-validation results keyed by model name, computed on the same
+        folds.
 
     Returns
     -------
@@ -212,7 +306,13 @@ def comparison_table(results: dict[str, CVResult]) -> pd.DataFrame:
         One row per model with columns ``<metric>_mean``, ``<metric>_std``
         and ``<metric>_pooled``, sorted by the pooled primary metric when it
         was computed.
+
+    Raises
+    ------
+    ValueError
+        If the results were computed on different folds.
     """
+    check_same_folds(results)
     rows = {}
     for name, result in results.items():
         summary = result.summary()

@@ -117,6 +117,12 @@ def _source_lines(metadata: Mapping[str, Any]) -> list[str]:
             f"{test['n_rows']} rows released {test['first_year']} to "
             f"{test['last_year']}, of which {test['n_censored']} right-censored"
         )
+    skipped = metadata.get("skipped_models")
+    if skipped:
+        lines.append(
+            "- Configured but not evaluated (optional library not installed): "
+            + ", ".join(skipped)
+        )
     transform = metadata.get("config", {}).get("target", {}).get("transform")
     if transform:
         lines.append(
