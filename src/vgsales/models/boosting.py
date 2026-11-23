@@ -31,6 +31,7 @@ The boosting libraries are optional dependencies (``pip install
 from __future__ import annotations
 
 import importlib
+import inspect
 import warnings
 from collections.abc import Mapping
 from types import ModuleType
@@ -48,7 +49,7 @@ from vgsales.data.temporal import RELEASE_YEAR
 from vgsales.features.pipeline import make_preprocessor
 from vgsales.features.prerelease import GROUP_COLUMN
 
-BOOSTING_NAMES: Final = ("xgboost",)
+BOOSTING_NAMES: Final = ("xgboost", "lightgbm")
 
 # Arguments of TemporalBoostingRegressor; the remaining factory arguments are
 # passed to the booster of the library.
@@ -316,8 +317,80 @@ class XGBoostRegressor(TemporalBoostingRegressor):
         return int(booster.best_iteration) + 1
 
 
+class LightGBMRegressor(TemporalBoostingRegressor):
+    """LightGBM (Ke et al., 2017) with native categorical splits.
+
+    Console and genre enter as integer codes from
+    :func:`vgsales.features.pipeline.make_preprocessor` with
+    ``categorical="ordinal"`` and are declared categorical. At each node
+    LightGBM orders the categories by their gradient statistics and searches
+    the best binary partition along that order (Fisher, 1958), instead of
+    splitting one-hot indicators one category at a time. Categories pooled as
+    rare share one code, and categories unseen in training (code -1) follow
+    the missing-value branch. Publisher and developer keep their frequency
+    and temporal target encodings. Missing numeric values and target
+    encodings are not imputed: each split learns the branch that missing
+    values follow.
+    """
+
+    default_params: ClassVar[dict[str, Any]] = {
+        "num_leaves": 31,
+        "min_child_samples": 20,
+        "subsample": 0.8,
+        "subsample_freq": 1,
+        "colsample_bytree": 0.8,
+        "reg_lambda": 1.0,
+        "min_data_per_group": 50,
+        "cat_smooth": 10.0,
+        "deterministic": True,
+        "force_col_wise": True,
+        "verbosity": -1,
+    }
+
+    def _make_preprocessor(self) -> Pipeline:
+        return make_preprocessor(self.config, categorical="ordinal", impute=False)
+
+    def _categorical_features(self) -> list[int]:
+        return list(range(len((self.config or FeatureConfig()).categorical)))
+
+    def _make_booster(self, n_estimators: int, early_stopping: bool) -> Any:
+        lgb = _require("lightgbm")
+        fixed = {
+            "objective": "regression",
+            "metric": "rmse",
+            "n_estimators": n_estimators,
+            "learning_rate": self.learning_rate,
+            "random_state": self.random_state,
+        }
+        return lgb.LGBMRegressor(**self._booster_params(fixed))
+
+    def _fit_booster(
+        self,
+        booster: Any,
+        X: Any,
+        y: np.ndarray,
+        eval_set: tuple[Any, np.ndarray] | None,
+    ) -> None:
+        kwargs: dict[str, Any] = {"categorical_feature": self._categorical_features()}
+        if eval_set is not None:
+            lgb = _require("lightgbm")
+            # LightGBM 4.7 replaced eval_set by eval_X and eval_y.
+            if "eval_X" in inspect.signature(booster.fit).parameters:
+                kwargs["eval_X"], kwargs["eval_y"] = eval_set
+            else:
+                kwargs["eval_set"] = [eval_set]
+            kwargs["callbacks"] = [
+                lgb.early_stopping(self.early_stopping_rounds, verbose=False)
+            ]
+        booster.fit(X, y, **kwargs)
+
+    def _best_n_estimators(self, booster: Any) -> int:
+        return int(booster.best_iteration_)
+
+
 _MODELS: Final[dict[str, type[TemporalBoostingRegressor]]] = {
     "xgboost": XGBoostRegressor,
+    "lightgbm": LightGBMRegressor,
 }
 
 
@@ -328,7 +401,7 @@ def make_boosting(
 
     Parameters
     ----------
-    name : {"xgboost"}
+    name : {"xgboost", "lightgbm"}
         Boosting library.
     config : FeatureConfig, optional
         Feature configuration of the preprocessing pipeline.

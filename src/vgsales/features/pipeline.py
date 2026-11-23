@@ -22,7 +22,12 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline, make_pipeline
-from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
+from sklearn.preprocessing import (
+    FunctionTransformer,
+    OneHotEncoder,
+    OrdinalEncoder,
+    StandardScaler,
+)
 
 from vgsales.config import FeatureConfig
 from vgsales.data.schema import assert_no_leakage
@@ -30,6 +35,9 @@ from vgsales.data.temporal import RELEASE_YEAR
 from vgsales.features.encoders import FrequencyEncoder, TemporalTargetEncoder
 
 _MISSING = "__missing__"
+
+CATEGORICAL_ENCODINGS = ("onehot", "ordinal")
+UNKNOWN_CODE = -1
 
 
 class LeakageGuard(TransformerMixin, BaseEstimator):
@@ -78,6 +86,18 @@ def _one_hot(min_count: int) -> Pipeline:
     )
 
 
+def _ordinal(min_count: int) -> Pipeline:
+    return make_pipeline(
+        FunctionTransformer(_fill_missing_category, feature_names_out="one-to-one"),
+        OrdinalEncoder(
+            handle_unknown="use_encoded_value",
+            unknown_value=UNKNOWN_CODE,
+            min_frequency=min_count,
+            dtype=np.float64,
+        ),
+    )
+
+
 def _median_imputer() -> SimpleImputer:
     # Keeps columns that are entirely missing in a small training fold, so the
     # output width does not depend on the fold.
@@ -85,7 +105,11 @@ def _median_imputer() -> SimpleImputer:
 
 
 def make_preprocessor(
-    config: FeatureConfig | None = None, *, scale: bool = False
+    config: FeatureConfig | None = None,
+    *,
+    scale: bool = False,
+    categorical: str = "onehot",
+    impute: bool = True,
 ) -> Pipeline:
     """Build the preprocessing pipeline for the pre-release feature frame.
 
@@ -95,38 +119,57 @@ def make_preprocessor(
         Feature section of the configuration. Defaults to ``FeatureConfig()``.
     scale : bool, default False
         Append a ``StandardScaler``, for linear and neural models.
+    categorical : {"onehot", "ordinal"}, default "onehot"
+        Encoding of the ``categorical`` columns. ``"ordinal"`` maps each
+        column to one integer code per training category, pools categories
+        rarer than ``min_category_count`` into a single code, and maps
+        categories unseen in training to :data:`UNKNOWN_CODE`. It is meant
+        for models with native categorical splits, which treat negative
+        codes as missing.
+    impute : bool, default True
+        Impute missing numeric values and target encodings with the training
+        median. Set to False for models that handle missing values natively.
 
     Returns
     -------
     sklearn.pipeline.Pipeline
         Steps ``guard`` (:class:`LeakageGuard`), ``columns`` (a
-        ``ColumnTransformer`` with blocks ``onehot``, ``frequency``,
-        ``target`` and ``numeric``) and optionally ``scale``. Columns of the
-        input that are not configured, such as the ``title_key`` group label,
-        are dropped.
+        ``ColumnTransformer`` with blocks ``onehot`` or ``ordinal``,
+        ``frequency``, ``target`` and ``numeric``, in this order) and
+        optionally ``scale``. With ordinal encoding, the first
+        ``len(config.categorical)`` output columns hold the codes. Columns of
+        the input that are not configured, such as the ``title_key`` group
+        label, are dropped.
     """
+    if categorical not in CATEGORICAL_ENCODINGS:
+        raise ValueError(
+            f"categorical must be one of {CATEGORICAL_ENCODINGS}, got {categorical!r}"
+        )
     config = config or FeatureConfig()
     high = list(config.high_cardinality)
     blocks: list[tuple[str, object, list[str]]] = []
     if config.categorical:
+        encoder = _one_hot if categorical == "onehot" else _ordinal
         blocks.append(
             (
-                "onehot",
-                _one_hot(config.min_category_count),
+                categorical,
+                encoder(config.min_category_count),
                 list(config.categorical),
             )
         )
     if high:
         blocks.append(("frequency", FrequencyEncoder(columns=high), high))
-        target = make_pipeline(
+        target_steps: list[object] = [
             TemporalTargetEncoder.from_config(
                 config.target_encoding_smoothing, columns=high
-            ),
-            _median_imputer(),
-        )
-        blocks.append(("target", target, [*high, RELEASE_YEAR]))
+            )
+        ]
+        if impute:
+            target_steps.append(_median_imputer())
+        blocks.append(("target", make_pipeline(*target_steps), [*high, RELEASE_YEAR]))
     if config.numeric:
-        blocks.append(("numeric", _median_imputer(), list(config.numeric)))
+        numeric = _median_imputer() if impute else "passthrough"
+        blocks.append(("numeric", numeric, list(config.numeric)))
     if not blocks:
         raise ValueError("the feature configuration selects no columns")
 

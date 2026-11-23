@@ -100,7 +100,6 @@ by one or more items below.
 
 ## Phase 4: Gradient boosting
 
-- [ ] 4.2 Add a LightGBM regressor with native categorical handling.
 - [ ] 4.3 Add a CatBoost regressor with ordered target statistics.
 - [ ] 4.4 Add a model registry and compare baselines and boosting models on identical folds.
 - [ ] 4.5 Add a paired Wilcoxon signed-rank test on per-fold errors to the comparison report.
@@ -187,3 +186,4 @@ by one or more items below.
 - [x] 2026-11-22: 3.4b Add a command-line entry point (`vgsales train`, `vgsales evaluate`) driven by the configuration.
 - [x] 2026-11-22: 3.5 Add a report writer for JSON metrics and markdown comparison tables under `reports/`.
 - [x] 2026-11-23: 4.1 Add an XGBoost regressor with early stopping on a temporal validation fold.
+- [x] 2026-11-23: 4.2 Add a LightGBM regressor with native categorical handling.

@@ -14,7 +14,7 @@ from vgsales.data.schema import LEAKAGE_COLUMNS, REGIONAL_SALES, TARGET
 from vgsales.data.splits import ExpandingWindowSplit
 from vgsales.data.synthetic import SyntheticSpec, make_synthetic
 from vgsales.data.temporal import apply_release_scope
-from vgsales.features.pipeline import LeakageGuard, make_preprocessor
+from vgsales.features.pipeline import UNKNOWN_CODE, LeakageGuard, make_preprocessor
 from vgsales.features.prerelease import (
     FEATURE_COLUMNS,
     GROUP_COLUMN,
@@ -150,6 +150,41 @@ def test_pipeline_survives_pickling(data: tuple[pd.DataFrame, np.ndarray]) -> No
     pre = make_preprocessor().fit(X, y)
     restored = pickle.loads(pickle.dumps(pre))
     np.testing.assert_allclose(restored.transform(X), pre.transform(X))
+
+
+def test_ordinal_encoding_codes_pools_and_flags_unknown(
+    data: tuple[pd.DataFrame, np.ndarray],
+) -> None:
+    X, y = data
+    config = FeatureConfig(min_category_count=10)
+    pre = make_preprocessor(config, categorical="ordinal")
+    pre.set_output(transform="pandas")
+    out = pre.fit_transform(X, y)
+    assert list(out.columns[:2]) == ["console", "genre"]
+    for column in ("console", "genre"):
+        counts = X[column].value_counts()
+        codes = out[column]
+        assert (codes == codes.round()).all()
+        assert codes.min() == 0
+        # One code per frequent category plus one for the pooled rare ones.
+        n_rare = int((counts < 10).sum())
+        assert codes.nunique() == int((counts >= 10).sum()) + (n_rare > 0)
+    query = X.head(3).assign(console="unreleased console")
+    assert (pre.transform(query)["console"] == UNKNOWN_CODE).all()
+
+
+def test_without_imputation_missing_values_pass_through(
+    data: tuple[pd.DataFrame, np.ndarray],
+) -> None:
+    X, y = data
+    pre = make_preprocessor(categorical="ordinal", impute=False)
+    out = pre.set_output(transform="pandas").fit_transform(X, y)
+    np.testing.assert_array_equal(out["critic_score"].isna(), X["critic_score"].isna())
+    # The temporal target encoding of the earliest year has no history.
+    first = (X["release_year"] == X["release_year"].min()).to_numpy()
+    assert out.loc[first, "publisher_te"].isna().all()
+    with pytest.raises(ValueError, match="categorical must be one of"):
+        make_preprocessor(categorical="target")
 
 
 def test_guard_errors() -> None:

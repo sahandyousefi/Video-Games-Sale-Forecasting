@@ -17,6 +17,7 @@ from vgsales.features.pipeline import make_preprocessor
 from vgsales.features.prerelease import GROUP_COLUMN, build_prerelease_features
 from vgsales.models.boosting import (
     BOOSTING_NAMES,
+    LightGBMRegressor,
     TemporalBoostingRegressor,
     XGBoostRegressor,
     _require,
@@ -146,7 +147,8 @@ def test_factory_splits_wrapper_and_booster_arguments() -> None:
     assert (model.n_estimators, model.validation_years) == (10, 1)
     assert model.params == {"max_depth": 3}
     assert clone(model).get_params()["params"] == {"max_depth": 3}
-    assert BOOSTING_NAMES == ("xgboost",)
+    assert BOOSTING_NAMES == ("xgboost", "lightgbm")
+    assert isinstance(make_boosting("lightgbm"), LightGBMRegressor)
     with pytest.raises(ValueError, match="unknown boosting model"):
         make_boosting("adaboost")
 
@@ -198,3 +200,53 @@ def test_xgboost_under_cross_validation(
     result = cross_validate(model, X, np.expm1(z), cv)
     assert np.isfinite(result.per_fold["rmsle"]).all()
     assert len(result.predictions) == sum(f.val_idx.size for f in cv.folds(X))
+
+
+def _split_kinds(model: LightGBMRegressor) -> set[tuple[int, str]]:
+    def walk(node: dict[str, Any]) -> None:
+        if "split_index" in node:
+            kinds.add((node["split_feature"], node["decision_type"]))
+            walk(node["left_child"])
+            walk(node["right_child"])
+
+    kinds: set[tuple[int, str]] = set()
+    for tree in model.booster_.booster_.dump_model()["tree_info"]:
+        walk(tree["tree_structure"])
+    return kinds
+
+
+def test_lightgbm_splits_console_and_genre_natively(
+    data: tuple[pd.DataFrame, np.ndarray],
+) -> None:
+    pytest.importorskip("lightgbm")
+    X, z = data
+    model = make_boosting(
+        "lightgbm",
+        n_estimators=200,
+        learning_rate=0.1,
+        early_stopping_rounds=20,
+        refit=False,
+        min_child_samples=5,
+        min_data_per_group=5,
+    ).fit(X, z)
+    curve = model.booster_.evals_result_["valid_0"]["rmse"]
+    assert model.n_estimators_ == int(np.argmin(curve)) + 1
+    assert model.validation_rmse_ == pytest.approx(min(curve), rel=1e-6)
+    kinds = _split_kinds(model)
+    # Columns 0 and 1 hold the console and genre codes.
+    assert {feature for feature, kind in kinds if kind == "=="} <= {0, 1}
+    assert any(kind == "==" for _, kind in kinds)
+
+
+def test_lightgbm_handles_unseen_categories_and_missing_values(
+    data: tuple[pd.DataFrame, np.ndarray],
+) -> None:
+    pytest.importorskip("lightgbm")
+    X, z = data
+    params = {"n_estimators": 100, "early_stopping_rounds": 10, "random_state": 1}
+    model = make_boosting("lightgbm", **params).fit(X, z)
+    again = make_boosting("lightgbm", **params).fit(X, z)
+    assert model.booster_.n_estimators == model.n_estimators_
+    np.testing.assert_array_equal(model.predict(X), again.predict(X))
+    query = X.head(5).assign(console="unreleased console", critic_score=np.nan)
+    assert np.isfinite(model.predict(query)).all()
