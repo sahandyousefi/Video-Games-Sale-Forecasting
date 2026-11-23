@@ -1,3 +1,4 @@
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -17,10 +18,12 @@ from vgsales.features.pipeline import make_preprocessor
 from vgsales.features.prerelease import GROUP_COLUMN, build_prerelease_features
 from vgsales.models.boosting import (
     BOOSTING_NAMES,
+    CatBoostRegressor,
     LightGBMRegressor,
     TemporalBoostingRegressor,
     XGBoostRegressor,
     _require,
+    chronological_order,
     make_boosting,
 )
 
@@ -147,10 +150,26 @@ def test_factory_splits_wrapper_and_booster_arguments() -> None:
     assert (model.n_estimators, model.validation_years) == (10, 1)
     assert model.params == {"max_depth": 3}
     assert clone(model).get_params()["params"] == {"max_depth": 3}
-    assert BOOSTING_NAMES == ("xgboost", "lightgbm")
+    assert BOOSTING_NAMES == ("xgboost", "lightgbm", "catboost")
     assert isinstance(make_boosting("lightgbm"), LightGBMRegressor)
+    assert isinstance(make_boosting("catboost"), CatBoostRegressor)
     with pytest.raises(ValueError, match="unknown boosting model"):
         make_boosting("adaboost")
+
+
+def test_chronological_order_sorts_by_year_then_month_stably() -> None:
+    X = pd.DataFrame(
+        {
+            "release_year": [2001, 2000, 2001, 2000, 2001],
+            "release_month": [3, 11, 1, 11, 3],
+        }
+    )
+    np.testing.assert_array_equal(chronological_order(X), [1, 3, 2, 0, 4])
+    np.testing.assert_array_equal(
+        chronological_order(X[["release_year"]]), [1, 3, 0, 2, 4]
+    )
+    with pytest.raises(ValueError, match="release_year"):
+        chronological_order(X[["release_month"]])
 
 
 def test_missing_library_names_the_extra() -> None:
@@ -250,3 +269,57 @@ def test_lightgbm_handles_unseen_categories_and_missing_values(
     np.testing.assert_array_equal(model.predict(X), again.predict(X))
     query = X.head(5).assign(console="unreleased console", critic_score=np.nan)
     assert np.isfinite(model.predict(query)).all()
+
+
+def test_catboost_uses_release_order_for_ordered_statistics(
+    data: tuple[pd.DataFrame, np.ndarray],
+) -> None:
+    pytest.importorskip("catboost")
+    X, z = data
+    model = make_boosting(
+        "catboost",
+        n_estimators=300,
+        learning_rate=0.1,
+        early_stopping_rounds=20,
+        refit=False,
+    ).fit(X, z)
+    params = model.booster_.get_params()
+    assert params["has_time"] is True
+    assert params["cat_features"] == ["console", "genre", "publisher", "developer"]
+    curve = model.booster_.get_evals_result()["validation"]["RMSE"]
+    assert model.n_estimators_ == int(np.argmin(curve)) + 1
+    assert model.booster_.tree_count_ == model.n_estimators_
+    assert model.validation_rmse_ == pytest.approx(min(curve), rel=1e-6)
+
+
+def test_catboost_refit_is_deterministic_and_handles_new_categories(
+    data: tuple[pd.DataFrame, np.ndarray],
+) -> None:
+    pytest.importorskip("catboost")
+    X, z = data
+    params = {"n_estimators": 100, "early_stopping_rounds": 10, "random_state": 1}
+    model = make_boosting("catboost", **params).fit(X, z)
+    again = make_boosting("catboost", **params).fit(X, z)
+    assert model.booster_.tree_count_ == model.n_estimators_
+    np.testing.assert_array_equal(model.predict(X), again.predict(X))
+    query = X.head(5).assign(
+        console="unreleased console", publisher=None, critic_score=np.nan
+    )
+    assert np.isfinite(model.predict(query)).all()
+
+
+def test_catboost_requires_the_release_year_feature(
+    data: tuple[pd.DataFrame, np.ndarray],
+) -> None:
+    pytest.importorskip("catboost")
+    X, z = data
+    config = load_config().features
+    numeric = tuple(c for c in config.numeric if c != "release_year")
+    model = make_boosting(
+        "catboost",
+        config=replace(config, numeric=numeric),
+        validation_years=0,
+        n_estimators=5,
+    )
+    with pytest.raises(ValueError, match="ordered in time"):
+        model.fit(X, z)

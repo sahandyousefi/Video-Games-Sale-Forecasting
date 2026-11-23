@@ -14,7 +14,12 @@ from vgsales.data.schema import LEAKAGE_COLUMNS, REGIONAL_SALES, TARGET
 from vgsales.data.splits import ExpandingWindowSplit
 from vgsales.data.synthetic import SyntheticSpec, make_synthetic
 from vgsales.data.temporal import apply_release_scope
-from vgsales.features.pipeline import UNKNOWN_CODE, LeakageGuard, make_preprocessor
+from vgsales.features.pipeline import (
+    UNKNOWN_CODE,
+    LeakageGuard,
+    make_native_preprocessor,
+    make_preprocessor,
+)
 from vgsales.features.prerelease import (
     FEATURE_COLUMNS,
     GROUP_COLUMN,
@@ -187,9 +192,33 @@ def test_without_imputation_missing_values_pass_through(
         make_preprocessor(categorical="target")
 
 
+def test_native_preprocessor_keeps_raw_categories_and_missing_values(
+    data: tuple[pd.DataFrame, np.ndarray],
+) -> None:
+    X, _ = data
+    config = load_config().features
+    probe = X.head(20).copy()
+    probe.loc[probe.index[0], "developer"] = None
+    out = make_native_preprocessor(config).fit_transform(probe)
+    categories = [*config.categorical, *config.high_cardinality]
+    assert list(out.columns) == [*categories, *config.numeric]
+    assert out.loc[probe.index[0], "developer"] == "__missing__"
+    pd.testing.assert_frame_equal(
+        out.loc[probe.index[1:], categories].astype(object),
+        probe.loc[probe.index[1:], categories].astype(object),
+    )
+    np.testing.assert_array_equal(
+        out["critic_score"].isna(), probe["critic_score"].isna()
+    )
+    with pytest.raises(ValueError, match="na_sales"):
+        make_native_preprocessor(config).fit(probe.assign(na_sales=1.0))
+
+
 def test_guard_errors() -> None:
     with pytest.raises(TypeError):
         LeakageGuard().fit(np.zeros((2, 2)))
     empty = FeatureConfig(categorical=(), high_cardinality=(), numeric=())
     with pytest.raises(ValueError, match="no columns"):
         make_preprocessor(empty)
+    with pytest.raises(ValueError, match="no columns"):
+        make_native_preprocessor(empty)

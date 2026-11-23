@@ -46,10 +46,12 @@ from sklearn.pipeline import Pipeline
 from vgsales.config import FeatureConfig
 from vgsales.data.splits import holdout_split
 from vgsales.data.temporal import RELEASE_YEAR
-from vgsales.features.pipeline import make_preprocessor
+from vgsales.features.pipeline import make_native_preprocessor, make_preprocessor
 from vgsales.features.prerelease import GROUP_COLUMN
 
-BOOSTING_NAMES: Final = ("xgboost", "lightgbm")
+BOOSTING_NAMES: Final = ("xgboost", "lightgbm", "catboost")
+
+TIME_ORDER: Final = (RELEASE_YEAR, "release_month")
 
 # Arguments of TemporalBoostingRegressor; the remaining factory arguments are
 # passed to the booster of the library.
@@ -75,6 +77,23 @@ def _require(module: str) -> ModuleType:
 
 def _rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(np.sqrt(np.mean((y_pred - y_true) ** 2)))
+
+
+def chronological_order(X: pd.DataFrame) -> np.ndarray:
+    """Return the positions of the rows sorted by release year and month.
+
+    The sort is stable, so rows of the same month keep their input order.
+
+    Raises
+    ------
+    ValueError
+        If ``X`` has no ``release_year`` column.
+    """
+    if RELEASE_YEAR not in X.columns:
+        raise ValueError(f"X must carry '{RELEASE_YEAR}' to be ordered in time")
+    keys = [X[column].to_numpy() for column in TIME_ORDER if column in X.columns]
+    # np.lexsort sorts by the last key first.
+    return np.lexsort(keys[::-1])
 
 
 class TemporalBoostingRegressor(RegressorMixin, BaseEstimator):
@@ -388,9 +407,79 @@ class LightGBMRegressor(TemporalBoostingRegressor):
         return int(booster.best_iteration_)
 
 
+class CatBoostRegressor(TemporalBoostingRegressor):
+    r"""CatBoost (Prokhorenkova et al., 2018) with ordered target statistics.
+
+    Console, genre, publisher and developer enter as strings from
+    :func:`vgsales.features.pipeline.make_native_preprocessor`, and CatBoost
+    encodes them itself. For a training row :math:`i` with category
+    :math:`x_i = c` at position :math:`\sigma(i)` of a permutation
+    :math:`\sigma`, the ordered target statistic is
+
+    .. math::
+
+        \hat x_i = \frac{\sum_{j: \sigma(j) < \sigma(i)} [x_j = c]\, z_j
+                         + a\, p}
+                        {\sum_{j: \sigma(j) < \sigma(i)} [x_j = c] + a},
+
+    with prior :math:`p` and prior weight :math:`a`, so the encoding of a row
+    never uses its own target. CatBoost draws :math:`\sigma` at random by
+    default. Here the training rows are sorted by release year and month and
+    fitted with ``has_time=True``, which makes :math:`\sigma` the release
+    order: a title is encoded from titles released before it, or earlier in
+    the input order within the same month. This is the in-model
+    counterpart of :class:`vgsales.features.encoders.TemporalTargetEncoder`.
+    Missing numeric values are handled natively. ``release_year`` must be
+    among the configured numeric features.
+    """
+
+    default_params: ClassVar[dict[str, Any]] = {
+        "depth": 6,
+        "l2_leaf_reg": 3.0,
+        "thread_count": -1,
+    }
+
+    def _make_preprocessor(self) -> Pipeline:
+        return make_native_preprocessor(self.config)
+
+    def _make_booster(self, n_estimators: int, early_stopping: bool) -> Any:
+        catboost = _require("catboost")
+        config = self.config or FeatureConfig()
+        fixed = {
+            "loss_function": "RMSE",
+            "eval_metric": "RMSE",
+            "iterations": n_estimators,
+            "learning_rate": self.learning_rate,
+            "random_seed": self.random_state,
+            "cat_features": [*config.categorical, *config.high_cardinality],
+            "has_time": True,
+            "allow_writing_files": False,
+            "verbose": False,
+        }
+        if early_stopping:
+            fixed["early_stopping_rounds"] = self.early_stopping_rounds
+            fixed["use_best_model"] = True
+        return catboost.CatBoostRegressor(**self._booster_params(fixed))
+
+    def _fit_booster(
+        self,
+        booster: Any,
+        X: Any,
+        y: np.ndarray,
+        eval_set: tuple[Any, np.ndarray] | None,
+    ) -> None:
+        order = chronological_order(X)
+        kwargs = {} if eval_set is None else {"eval_set": eval_set}
+        booster.fit(X.iloc[order], y[order], **kwargs)
+
+    def _best_n_estimators(self, booster: Any) -> int:
+        return int(booster.get_best_iteration()) + 1
+
+
 _MODELS: Final[dict[str, type[TemporalBoostingRegressor]]] = {
     "xgboost": XGBoostRegressor,
     "lightgbm": LightGBMRegressor,
+    "catboost": CatBoostRegressor,
 }
 
 
@@ -401,7 +490,7 @@ def make_boosting(
 
     Parameters
     ----------
-    name : {"xgboost", "lightgbm"}
+    name : {"xgboost", "lightgbm", "catboost"}
         Boosting library.
     config : FeatureConfig, optional
         Feature configuration of the preprocessing pipeline.

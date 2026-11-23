@@ -185,3 +185,40 @@ def make_preprocessor(
     if scale:
         steps.append(("scale", StandardScaler()))
     return Pipeline(steps)
+
+
+def make_native_preprocessor(config: FeatureConfig | None = None) -> Pipeline:
+    """Select the configured columns for a model that encodes categories itself.
+
+    Parameters
+    ----------
+    config : FeatureConfig, optional
+        Feature section of the configuration. Defaults to ``FeatureConfig()``.
+
+    Returns
+    -------
+    sklearn.pipeline.Pipeline
+        Steps ``guard`` (:class:`LeakageGuard`) and ``columns``. The output
+        is a DataFrame whose first columns are the ``categorical`` and
+        ``high_cardinality`` columns as strings, with missing values replaced
+        by a ``"__missing__"`` category, followed by the ``numeric`` columns
+        unchanged, missing values included. Nothing is learned from the
+        target.
+    """
+    config = config or FeatureConfig()
+    categories = [*config.categorical, *config.high_cardinality]
+    blocks: list[tuple[str, object, list[str]]] = []
+    if categories:
+        fill = FunctionTransformer(
+            _fill_missing_category, feature_names_out="one-to-one"
+        )
+        blocks.append(("categories", fill, categories))
+    if config.numeric:
+        blocks.append(("numeric", "passthrough", list(config.numeric)))
+    if not blocks:
+        raise ValueError("the feature configuration selects no columns")
+    columns = ColumnTransformer(
+        blocks, remainder="drop", verbose_feature_names_out=False
+    )
+    pipeline = Pipeline([("guard", LeakageGuard()), ("columns", columns)])
+    return pipeline.set_output(transform="pandas")
