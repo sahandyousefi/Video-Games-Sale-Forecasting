@@ -5,7 +5,8 @@ pre-release feature frame as input and is fitted on the modelling scale of
 the target, so that any two models can be cross-validated on identical folds
 by :func:`vgsales.evaluation.cv.compare_models`. Models whose library is an
 optional dependency name the module they need, and :func:`is_available`
-reports whether it can be imported.
+reports whether it can be imported. The PyTorch modules are imported only
+when a neural model is built, so the registry loads without ``torch``.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ class ModelSpec:
     ----------
     name : str
         Name used in the configuration and on the command line.
-    family : {"baseline", "boosting"}
+    family : {"baseline", "boosting", "neural"}
         Factory that builds the model.
     requires : str or None
         Module of an optional dependency, or None for core dependencies only.
@@ -91,8 +92,17 @@ REGISTRY: Final[dict[str, ModelSpec]] = {
             "gbm",
             "CatBoost with ordered target statistics in release order",
         ),
+        ModelSpec(
+            "mlp",
+            "neural",
+            "torch",
+            "dl",
+            "MLP on entity embeddings with temporal early stopping",
+        ),
     )
 }
+
+SEEDED_FAMILIES: Final = ("boosting", "neural")
 
 MODEL_NAMES: Final = tuple(REGISTRY)
 
@@ -127,8 +137,9 @@ def is_available(name: str) -> bool:
 def model_params(name: str, config: Config, **overrides: Any) -> dict[str, Any]:
     """Resolve the keyword arguments with which model ``name`` is built.
 
-    Configured parameters are updated with ``overrides``. Boosting models
-    receive ``config.seed`` as ``random_state`` unless one is given.
+    Configured parameters are updated with ``overrides``. Boosting and
+    neural models receive ``config.seed`` as ``random_state`` unless one is
+    given.
 
     Raises
     ------
@@ -137,7 +148,7 @@ def model_params(name: str, config: Config, **overrides: Any) -> dict[str, Any]:
     """
     spec = get_spec(name)
     params = {**config.models.params_for(name), **overrides}
-    if spec.family == "boosting":
+    if spec.family in SEEDED_FAMILIES:
         params.setdefault("random_state", config.seed)
     return params
 
@@ -171,6 +182,11 @@ def make_model(name: str, config: Config, **overrides: Any) -> BaseEstimator:
     hint = missing_dependency(name)
     if hint is not None:
         raise ImportError(f"model {name!r} is unavailable: {hint}")
-    if get_spec(name).family == "boosting":
+    family = get_spec(name).family
+    if family == "boosting":
         return make_boosting(name, config.features, **params)
+    if family == "neural":
+        from vgsales.models.neural.regressor import EmbeddingMLPRegressor
+
+        return EmbeddingMLPRegressor(config=config.features, **params)
     return make_baseline(name, config.features, **params)

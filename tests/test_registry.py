@@ -6,6 +6,7 @@ from sklearn.pipeline import Pipeline
 from vgsales.config import config_from_dict, load_config
 from vgsales.models.baselines import BASELINE_NAMES
 from vgsales.models.boosting import BOOSTING_NAMES, TemporalBoostingRegressor
+from vgsales.models.neural import NEURAL_NAMES
 from vgsales.models.registry import (
     MODEL_NAMES,
     REGISTRY,
@@ -27,8 +28,8 @@ def without_xgboost(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(importlib.util, "find_spec", find_spec)
 
 
-def test_registry_covers_baselines_and_boosting_models() -> None:
-    assert (*BASELINE_NAMES, *BOOSTING_NAMES) == MODEL_NAMES
+def test_registry_covers_all_model_families() -> None:
+    assert (*BASELINE_NAMES, *BOOSTING_NAMES, *NEURAL_NAMES) == MODEL_NAMES
     for name in BASELINE_NAMES:
         assert REGISTRY[name].family == "baseline"
         assert REGISTRY[name].requires is None
@@ -37,6 +38,8 @@ def test_registry_covers_baselines_and_boosting_models() -> None:
         assert get_spec(name).family == "boosting"
         assert get_spec(name).requires == name
         assert get_spec(name).extra == "gbm"
+    spec = get_spec("mlp")
+    assert (spec.family, spec.requires, spec.extra) == ("neural", "torch", "dl")
     with pytest.raises(ValueError, match="unknown model"):
         get_spec("adaboost")
 
@@ -61,6 +64,7 @@ def test_boosting_parameters_come_from_the_config_and_the_seed() -> None:
     assert params["max_depth"] == 3
     assert params["subsample"] == 0.8
     assert "random_state" not in model_params("ridge", config)
+    assert model_params("mlp", config)["random_state"] == config.seed
 
 
 @pytest.mark.parametrize("name", BOOSTING_NAMES)
@@ -81,3 +85,16 @@ def test_missing_library_is_reported() -> None:
     assert missing_dependency("ridge") is None
     with pytest.raises(ImportError, match="unavailable"):
         make_model("xgboost", load_config())
+
+
+def test_mlp_is_built_from_the_config() -> None:
+    pytest.importorskip("torch")
+    from vgsales.models.neural.regressor import EmbeddingMLPRegressor
+
+    config = load_config()
+    model = make_model("mlp", config, max_epochs=5)
+    assert isinstance(model, EmbeddingMLPRegressor)
+    assert model.config == config.features
+    assert list(model.hidden) == [128, 64]
+    assert model.max_epochs == 5
+    assert model.random_state == config.seed

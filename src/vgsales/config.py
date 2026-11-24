@@ -145,6 +145,16 @@ def _default_model_params() -> dict[str, dict[str, Any]]:
             num_leaves=31, min_child_samples=20, min_data_per_group=50
         ),
         "catboost": _boosting_params(depth=6, l2_leaf_reg=3.0),
+        "mlp": {
+            "hidden": [128, 64],
+            "dropout": 0.1,
+            "learning_rate": 1e-3,
+            "weight_decay": 1e-5,
+            "batch_size": 256,
+            "max_epochs": 200,
+            "patience": 20,
+            "validation_years": 2,
+        },
     }
 
 
@@ -166,6 +176,7 @@ class ModelConfig:
         "xgboost",
         "lightgbm",
         "catboost",
+        "mlp",
     )
     train: str = "ridge"
     params: dict[str, dict[str, Any]] | None = None

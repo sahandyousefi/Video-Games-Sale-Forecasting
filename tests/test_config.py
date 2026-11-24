@@ -96,6 +96,7 @@ def test_model_section_defaults() -> None:
         "xgboost",
         "lightgbm",
         "catboost",
+        "mlp",
     )
     assert models.train == "ridge"
     assert models.params_for("ridge") == {"alpha": 1.0}

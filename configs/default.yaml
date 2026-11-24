@@ -42,13 +42,15 @@ features:
 
 models:
   # Compared on identical expanding-window folds by `vgsales evaluate`.
-  # Boosting models need the gbm extras and are skipped when not installed.
-  evaluate: [global_median, group_median, ridge, xgboost, lightgbm, catboost]
+  # Boosting models need the gbm extras and the MLP needs the dl extras; models
+  # whose library is not installed are skipped.
+  evaluate: [global_median, group_median, ridge, xgboost, lightgbm, catboost, mlp]
   # Fitted on all development years by `vgsales train`.
   train: ridge
   # Keyword arguments of each model's estimator. For boosting models,
-  # n_estimators is the maximum number of rounds; the number used is chosen
-  # by early stopping on the last validation_years of each training window.
+  # n_estimators is the maximum number of rounds, and for the MLP max_epochs
+  # is the maximum number of epochs; the number used is chosen by early
+  # stopping on the last validation_years of each training window.
   params:
     group_median:
       min_count: 5
@@ -78,6 +80,15 @@ models:
       validation_years: 2
       depth: 6
       l2_leaf_reg: 3.0
+    mlp:
+      hidden: [128, 64]
+      dropout: 0.1
+      learning_rate: 0.001
+      weight_decay: 0.00001
+      batch_size: 256
+      max_epochs: 200
+      patience: 20
+      validation_years: 2
 
 output:
   model_dir: models
