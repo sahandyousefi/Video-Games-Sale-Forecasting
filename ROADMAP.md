@@ -20,7 +20,7 @@ release years that the model has not seen.
 |   |-- config.py              typed configuration loader
 |   |-- dataset.py             raw extract to features, target and holdout split
 |   |-- cli.py                 command-line entry point (train, evaluate)
-|   |-- data/                  schema, loading, cleaning, splits, profiling, synthetic data
+|   |-- data/                  schema, loading, cleaning, splits, profiling, aggregate series, synthetic data
 |   |-- features/              leakage-safe encoders, pre-release features, embedding inputs
 |   |-- models/                target transform, baselines, gradient boosting, registry
 |   |   `-- neural/            PyTorch data loading, networks and training
@@ -104,7 +104,6 @@ by one or more items below.
 
 ## Phase 5: Deep learning (PyTorch)
 
-- [ ] 5.5 Build aggregate sales series (sales by release month for each genre and platform family).
 - [ ] 5.6 Implement a GRU sequence model for the aggregate series with windowed training.
 - [ ] 5.7 Evaluate the sequence model with rolling-origin validation against seasonal naive and exponential smoothing baselines.
 
@@ -188,3 +187,4 @@ by one or more items below.
 - [x] 2026-11-24: 5.2 Implement an entity-embedding MLP with dropout and weight decay.
 - [x] 2026-11-24: 5.3 Implement the training loop with early stopping, learning-rate scheduling and seeded determinism.
 - [x] 2026-11-24: 5.4 Register the MLP in the model registry and the cross-validation runner.
+- [x] 2026-11-24: 5.5 Build aggregate sales series (sales by release month for each genre and platform family).
