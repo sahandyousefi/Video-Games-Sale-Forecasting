@@ -104,7 +104,6 @@ by one or more items below.
 
 ## Phase 5: Deep learning (PyTorch)
 
-- [ ] 5.2 Implement an entity-embedding MLP with dropout and weight decay.
 - [ ] 5.3 Implement the training loop with early stopping, learning-rate scheduling and seeded determinism.
 - [ ] 5.4 Register the MLP in the model registry and the cross-validation runner.
 - [ ] 5.5 Build aggregate sales series (sales by release month for each genre and platform family).
@@ -188,3 +187,4 @@ by one or more items below.
 - [x] 2026-11-23: 4.4 Add a model registry and compare baselines and boosting models on identical folds.
 - [x] 2026-11-23: 4.5 Add a paired Wilcoxon signed-rank test on per-fold errors to the comparison report.
 - [x] 2026-11-24: 5.1 Add a tabular dataset and data loader for categorical indices and standardised numeric inputs.
+- [x] 2026-11-24: 5.2 Implement an entity-embedding MLP with dropout and weight decay.
