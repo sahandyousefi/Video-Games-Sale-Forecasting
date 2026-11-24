@@ -77,7 +77,7 @@ class TabularDataset(Dataset):
 
 
 def make_loader(
-    dataset: TabularDataset,
+    dataset: Dataset,
     batch_size: int = 256,
     *,
     shuffle: bool = False,
@@ -88,8 +88,9 @@ def make_loader(
 
     Parameters
     ----------
-    dataset : TabularDataset
-        Rows to iterate over.
+    dataset : Dataset
+        Map-style dataset that accepts a list of positions as index, such as
+        :class:`TabularDataset` or ``torch.utils.data.TensorDataset``.
     batch_size : int, default 256
         Rows per batch. The last batch is smaller unless ``drop_last``.
     shuffle : bool, default False
@@ -103,7 +104,7 @@ def make_loader(
     Returns
     -------
     torch.utils.data.DataLoader
-        Loader whose items are the batches of :meth:`TabularDataset.__getitem__`.
+        Loader whose items are the batches returned by ``dataset``.
     """
     if batch_size < 1:
         raise ValueError("batch_size must be >= 1")
