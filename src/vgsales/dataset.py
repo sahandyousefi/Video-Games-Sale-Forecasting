@@ -28,6 +28,7 @@ import pandas as pd
 from vgsales.config import Config
 from vgsales.data.cleaning import CleaningReport, clean, normalise_text
 from vgsales.data.loading import coerce_raw, load_raw
+from vgsales.data.series import N_TITLES, aggregate_series, to_wide, uncensored_end
 from vgsales.data.splits import holdout_split
 from vgsales.data.temporal import (
     CENSORED,
@@ -180,3 +181,77 @@ def load_dataset(
     """
     raw = load_raw(config.data.raw_path if path is None else path, strict=strict)
     return prepare_dataset(raw, config, strict=strict)
+
+
+@dataclass(frozen=True)
+class SeriesData:
+    """Monthly aggregate series for the rolling-origin evaluation.
+
+    Attributes
+    ----------
+    sales, counts : pandas.DataFrame
+        Monthly sales in millions of units and numbers of tracked titles,
+        one column per segment (:func:`vgsales.data.series.to_wide`).
+    snapshot : str
+        Snapshot date of the extract in ISO format.
+    """
+
+    sales: pd.DataFrame
+    counts: pd.DataFrame
+    snapshot: str
+
+    def summary(self) -> dict[str, Any]:
+        """Return the range, number of segments and number of titles."""
+        return {
+            "snapshot": self.snapshot,
+            "first_month": self.sales.index[0].strftime("%Y-%m"),
+            "last_month": self.sales.index[-1].strftime("%Y-%m"),
+            "n_months": len(self.sales),
+            "n_segments": self.sales.shape[1],
+            "n_titles": int(self.counts.to_numpy().sum()),
+        }
+
+
+def prepare_series(
+    raw: pd.DataFrame, config: Config, *, strict: bool = True
+) -> SeriesData:
+    """Aggregate a raw or loaded extract into monthly segment series.
+
+    The rows pass the same coercion, cleaning and release-year scope as in
+    :func:`prepare_dataset`. The series run from ``series.start`` to the
+    last month before the censoring window of ``data.censoring_window_years``
+    (:func:`vgsales.data.series.uncensored_end`), so that no month is scored
+    while its sales are still accumulating.
+
+    Parameters
+    ----------
+    raw : pandas.DataFrame
+        Frame with the raw schema columns.
+    config : Config
+        Pipeline configuration; the ``data`` and ``series`` sections are used.
+    strict : bool, default True
+        Passed to the schema coercion.
+
+    Returns
+    -------
+    SeriesData
+        Wide monthly sales and title counts.
+    """
+    loaded, _ = coerce_raw(raw, strict=strict)
+    cleaned, _ = clean(loaded, strict=strict)
+    scoped, scope = apply_release_scope(cleaned, config.data)
+    if scoped.empty:
+        raise ValueError("no rows with observed sales in the configured scope")
+    end = uncensored_end(scope.snapshot, config.data.censoring_window_years)
+    series = aggregate_series(
+        scoped,
+        by=config.series.by,
+        start=config.series.start,
+        end=end,
+        min_titles=config.series.min_titles,
+    )
+    return SeriesData(
+        sales=to_wide(series),
+        counts=to_wide(series, value=N_TITLES),
+        snapshot=scope.snapshot,
+    )

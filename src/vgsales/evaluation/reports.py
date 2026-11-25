@@ -1,4 +1,4 @@
-"""JSON and markdown reports of cross-validation and holdout scores.
+"""JSON and markdown reports of cross-validation, holdout and series scores.
 
 Every report carries the metadata needed to reproduce it: the package
 version, the data source, the configuration and the sizes and year ranges of
@@ -7,7 +7,9 @@ precision, with undefined values (for example the spread of a single fold)
 written as ``null``. Markdown files hold the tables meant for reading. When
 two or more models are compared on two or more folds, the cross-validation
 report adds paired Wilcoxon signed-rank tests of the per-fold primary metric
-against the best model (:mod:`vgsales.evaluation.significance`).
+against the best model (:mod:`vgsales.evaluation.significance`). The series
+report holds the rolling-origin scores of the monthly forecasters
+(:mod:`vgsales.evaluation.rolling`).
 """
 
 from __future__ import annotations
@@ -24,10 +26,13 @@ import pandas as pd
 
 from vgsales.evaluation.cv import CVResult, comparison_table
 from vgsales.evaluation.metrics import GREATER_IS_BETTER, PRIMARY_METRIC
+from vgsales.evaluation.rolling import RollingResult, paired_origin_tests
 from vgsales.evaluation.significance import paired_comparison
 
 CV_JSON = "cv_metrics.json"
 CV_MARKDOWN = "cv_comparison.md"
+SERIES_JSON = "series_metrics.json"
+SERIES_MARKDOWN = "series_comparison.md"
 SYNTHETIC = "synthetic"
 
 _POOLED_COLUMNS = ("rmsle", "mae_log", "r2_log", "rmse", "mae")
@@ -40,6 +45,8 @@ _LABELS = {
     "mae": "MAE",
     "medae": "MedAE",
     "r2": "R^2",
+    "mase": "MASE",
+    "skill": "Skill",
 }
 
 
@@ -352,4 +359,159 @@ def write_holdout_report(
     )
     json_path = _write(directory / f"holdout_{name}.json", _dump(record))
     md_path = _write(directory / f"holdout_{name}.md", markdown + "\n")
+    return json_path, md_path
+
+
+def _series_source_lines(metadata: Mapping[str, Any]) -> list[str]:
+    source = metadata.get("source", "unknown")
+    lines = [f"- Source: {source}"]
+    if source == SYNTHETIC:
+        lines.append(
+            "- The data are synthetic. Scores describe the generator and carry "
+            "no information about the market."
+        )
+    lines.append(
+        f"- Package version {metadata.get('version', 'unknown')}, "
+        f"generated {metadata.get('created', _now())}"
+    )
+    series = metadata.get("series")
+    if series:
+        lines.append(
+            f"- Series: {series['n_segments']} segments, monthly from "
+            f"{series['first_month']} to {series['last_month']} "
+            f"({series['n_months']} months, {series['n_titles']} tracked titles); "
+            f"the last month precedes the censoring window of the "
+            f"{series['snapshot']} snapshot"
+        )
+    skipped = metadata.get("skipped_models")
+    if skipped:
+        lines.append(
+            "- Configured but not evaluated (optional library not installed): "
+            + ", ".join(skipped)
+        )
+    return lines
+
+
+def _series_paired(result: RollingResult, reference: str) -> pd.DataFrame | None:
+    if len(result.models) < 2 or len(result.origins) < 2:
+        return None
+    return paired_origin_tests(result, reference)
+
+
+def series_markdown(
+    result: RollingResult,
+    reference: str,
+    metadata: Mapping[str, Any] | None = None,
+) -> str:
+    """Render the rolling-origin comparison as a markdown document.
+
+    Parameters
+    ----------
+    result : RollingResult
+        Output of :func:`vgsales.evaluation.rolling.rolling_origin_evaluation`.
+    reference : str
+        Model against which skill and paired tests are computed.
+    metadata : mapping, optional
+        Keys ``source``, ``version``, ``created``, ``series`` and
+        ``skipped_models`` as written by the command line.
+
+    Returns
+    -------
+    str
+        Markdown document.
+    """
+    metadata = metadata or {}
+    origins = ", ".join(origin.strftime("%Y-%m") for origin in result.origins)
+    summary = result.summary(reference).sort_values("rmsle")
+    summary = summary.rename(columns=_LABELS)
+    by_step = result.by_step()
+    by_step.index.name = "step"
+    sections = [
+        "# Rolling-origin comparison of series forecasters",
+        "\n".join(_series_source_lines(metadata)),
+        "## Design",
+        f"Every forecaster is refitted on the months up to each origin ({origins}) "
+        f"and forecasts the next {result.horizon} months, which are then "
+        "compared with the observed monthly sales. RMSLE and MAE log are "
+        "computed on log(1 + sales), MAE in millions of units. MASE scales "
+        "each absolute log error by the in-sample mean absolute error of the "
+        "seasonal naive forecast on the history of its origin. Skill is "
+        f"1 - RMSLE / RMSLE of {reference}. Lower is better except for skill.",
+        "## Scores",
+        markdown_table(summary),
+        "## RMSLE by forecast step",
+        markdown_table(by_step),
+    ]
+    paired = _series_paired(result, reference)
+    if paired is not None:
+        out = pd.DataFrame(index=paired.index.rename("model"))
+        out["origins better"] = [
+            f"{better}/{n}"
+            for better, n in zip(paired["n_better"], paired["n_origins"], strict=True)
+        ]
+        out["median difference"] = paired["median_diff"]
+        out["W+"] = [f"{w:g}" for w in paired["statistic"]]
+        out["p"] = paired["p_value"]
+        out["p (Holm)"] = paired["p_holm"]
+        sections += [
+            "## Paired comparison over origins",
+            f"The RMSLE of each origin is paired with that of {reference}. "
+            "p is the two-sided Wilcoxon signed-rank p-value and p (Holm) "
+            f"adjusts it for the {len(out)} comparisons. With "
+            f"{len(result.origins)} origins the smallest attainable p-value is "
+            f"{2.0 ** (1 - len(result.origins)):.4f}. Successive origins share "
+            "history and their forecast months can overlap, so the test checks "
+            "the consistency of the ranking across origins.",
+            markdown_table(out),
+        ]
+    return "\n\n".join(sections) + "\n"
+
+
+def series_record(
+    result: RollingResult,
+    reference: str,
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Collect metadata and rolling-origin scores in a JSON-ready dict."""
+    by_origin = result.scores(("origin",)).reset_index()
+    by_origin["origin"] = by_origin["origin"].dt.strftime("%Y-%m")
+    record: dict[str, Any] = {
+        "metadata": dict(metadata or {}),
+        "origins": [origin.strftime("%Y-%m") for origin in result.origins],
+        "horizon": result.horizon,
+        "reference": reference,
+        "summary": result.summary(reference).to_dict(orient="index"),
+        "by_step": result.scores(("step",)).reset_index().to_dict(orient="records"),
+        "by_origin": by_origin.to_dict(orient="records"),
+    }
+    paired = _series_paired(result, reference)
+    if paired is not None:
+        record["paired_tests"] = {
+            "metric": "rmsle",
+            "test": "wilcoxon_signed_rank",
+            "tests": paired.to_dict(orient="index"),
+        }
+    return to_jsonable(record)
+
+
+def write_series_report(
+    result: RollingResult,
+    directory: str | Path,
+    reference: str,
+    metadata: Mapping[str, Any] | None = None,
+) -> tuple[Path, Path]:
+    """Write ``series_metrics.json`` and ``series_comparison.md`` to ``directory``.
+
+    Returns
+    -------
+    tuple of Path
+        Paths of the JSON and markdown files.
+    """
+    metadata = {"created": _now(), **(metadata or {})}
+    directory = Path(directory)
+    record = series_record(result, reference, metadata)
+    json_path = _write(directory / SERIES_JSON, _dump(record))
+    md_path = _write(
+        directory / SERIES_MARKDOWN, series_markdown(result, reference, metadata)
+    )
     return json_path, md_path

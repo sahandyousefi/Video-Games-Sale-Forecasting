@@ -90,6 +90,34 @@ models:
       patience: 20
       validation_years: 2
 
+series:
+  # Monthly sales of tracked titles by release month, evaluated by
+  # `vgsales series` from rolling origins. The series end before the
+  # censoring window; segments with fewer than min_titles titles are dropped.
+  by: [genre, platform_family]
+  start: "1995-01-01"
+  min_titles: 50
+  horizon: 12
+  n_origins: 5
+  origin_step: 12
+  min_history: 60
+  season: 12
+  # The GRU needs the dl extras and is skipped when torch is not installed.
+  models: [seasonal_naive, ses, ets, gru]
+  reference: seasonal_naive
+  params:
+    gru:
+      input_length: 24
+      hidden_size: 32
+      segment_dim: 4
+      dropout: 0.1
+      learning_rate: 0.001
+      weight_decay: 0.0001
+      batch_size: 128
+      max_epochs: 100
+      patience: 15
+      validation_months: 24
+
 output:
   model_dir: models
   report_dir: reports

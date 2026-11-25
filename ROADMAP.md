@@ -11,15 +11,15 @@ release years that the model has not seen.
 ```
 .
 |-- .github/workflows/ci.yml   lint and tests on every push
-|-- configs/                   YAML configuration (data, split, features, models)
+|-- configs/                   YAML configuration (data, split, features, models, series)
 |-- data/README.md             source, license, schema, acquisition
 |-- docs/                      methodology and model card
 |-- notebooks/                 exploration and walkthrough notebooks
 |-- reports/figures/           generated figures
 |-- src/vgsales/
 |   |-- config.py              typed configuration loader
-|   |-- dataset.py             raw extract to features, target and holdout split
-|   |-- cli.py                 command-line entry point (train, evaluate)
+|   |-- dataset.py             raw extract to features, target and holdout split; monthly series
+|   |-- cli.py                 command-line entry point (train, evaluate, series)
 |   |-- data/                  schema, loading, cleaning, splits, profiling, aggregate series, synthetic data
 |   |-- features/              leakage-safe encoders, pre-release features, embedding inputs, sequence windows
 |   |-- models/                target transform, baselines, gradient boosting, registry, series baselines
@@ -104,7 +104,6 @@ by one or more items below.
 
 ## Phase 5: Deep learning (PyTorch)
 
-- [ ] 5.7c Add a `series` configuration section and a `vgsales series` command that evaluates the GRU against seasonal naive and exponential smoothing baselines from rolling origins and writes a report.
 
 ## Phase 6: Hyperparameter optimisation
 
@@ -191,3 +190,4 @@ by one or more items below.
 - [x] 2026-11-25: 5.6b Implement a GRU sequence model for the aggregate series with windowed training.
 - [x] 2026-11-25: 5.7a Add seasonal naive and additive seasonal exponential smoothing baselines for the monthly series.
 - [x] 2026-11-25: 5.7b Implement rolling-origin evaluation for the series forecasters: refit at every origin, RMSLE, MASE and per-step scores, paired tests over origins.
+- [x] 2026-11-25: 5.7c Add a `series` configuration section and a `vgsales series` command that evaluates the GRU against seasonal naive and exponential smoothing baselines from rolling origins and writes a report.

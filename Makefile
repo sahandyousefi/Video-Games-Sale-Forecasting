@@ -1,6 +1,6 @@
 PYTHON ?= python
 
-.PHONY: install install-all lint format test check evaluate train clean
+.PHONY: install install-all lint format test check evaluate train series clean
 
 install:
 	$(PYTHON) -m pip install -e ".[dev]"
@@ -26,6 +26,9 @@ evaluate:
 
 train:
 	$(PYTHON) -m vgsales train
+
+series:
+	$(PYTHON) -m vgsales series
 
 clean:
 	rm -rf .pytest_cache .ruff_cache .coverage htmlcov build dist src/*.egg-info

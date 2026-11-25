@@ -11,6 +11,7 @@ from typing import Any
 import yaml
 
 from vgsales.data.schema import assert_no_leakage
+from vgsales.models.forecasting import FORECASTER_NAMES
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "default.yaml"
 
@@ -212,6 +213,92 @@ class ModelConfig:
         return dict((self.params or {}).get(name, {}))
 
 
+def _default_series_params() -> dict[str, dict[str, Any]]:
+    return {
+        "gru": {
+            "input_length": 24,
+            "hidden_size": 32,
+            "segment_dim": 4,
+            "dropout": 0.1,
+            "learning_rate": 1e-3,
+            "weight_decay": 1e-4,
+            "batch_size": 128,
+            "max_epochs": 100,
+            "patience": 15,
+            "validation_months": 24,
+        },
+    }
+
+
+@dataclass(frozen=True)
+class SeriesConfig:
+    """Monthly aggregate series and their rolling-origin evaluation.
+
+    The series sum the sales of tracked titles by release month for each
+    segment defined by ``by`` (see :mod:`vgsales.data.series`), from
+    ``start`` to the last month before the censoring window. Segments with
+    fewer than ``min_titles`` titles are dropped. ``models`` are refitted at
+    ``n_origins`` origins ``origin_step`` months apart, the first with at
+    least ``min_history`` months, and forecast ``horizon`` months; skill is
+    reported against ``reference``. ``params`` holds keyword arguments of the
+    forecasters, as for :class:`ModelConfig`.
+    """
+
+    by: tuple[str, ...] = ("genre", "platform_family")
+    start: str | None = "1995-01-01"
+    min_titles: int = 50
+    horizon: int = 12
+    n_origins: int = 5
+    origin_step: int = 12
+    min_history: int = 60
+    season: int = 12
+    models: tuple[str, ...] = ("seasonal_naive", "ses", "ets", "gru")
+    reference: str = "seasonal_naive"
+    params: dict[str, dict[str, Any]] | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("by", "models"):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
+        if not self.by:
+            raise ValueError("series.by must name at least one column")
+        assert_no_leakage(self.by)
+        if self.start is not None:
+            iso = date.fromisoformat(str(self.start)).isoformat()
+            object.__setattr__(self, "start", iso)
+        for name in ("min_titles", "horizon", "n_origins", "origin_step"):
+            _require_int(f"series.{name}", getattr(self, name), 1)
+        _require_int("series.min_history", self.min_history, 2)
+        _require_int("series.season", self.season, 1)
+        unknown = sorted(set(self.models) - set(FORECASTER_NAMES))
+        if not self.models or unknown:
+            raise ValueError(
+                f"series.models must name forecasters from {FORECASTER_NAMES}, "
+                f"got unknown {unknown}"
+            )
+        if self.reference not in self.models:
+            raise ValueError("series.reference must be one of series.models")
+        if self.params is None:
+            defaults = _default_series_params()
+            object.__setattr__(
+                self, "params", {k: v for k, v in defaults.items() if k in self.models}
+            )
+        if not isinstance(self.params, Mapping):
+            raise TypeError("series.params must be a mapping")
+        params = {}
+        for name, values in self.params.items():
+            if not isinstance(values, Mapping):
+                raise TypeError(f"series.params.{name} must be a mapping")
+            params[name] = dict(values)
+        unused = sorted(set(params) - set(self.models))
+        if unused:
+            raise ValueError(f"series.params given for unlisted models: {unused}")
+        object.__setattr__(self, "params", params)
+
+    def params_for(self, name: str) -> dict[str, Any]:
+        """Return a copy of the keyword arguments configured for ``name``."""
+        return dict((self.params or {}).get(name, {}))
+
+
 @dataclass(frozen=True)
 class OutputConfig:
     """Directories for fitted models and generated reports."""
@@ -230,6 +317,7 @@ class Config:
     split: SplitConfig = SplitConfig()
     features: FeatureConfig = FeatureConfig()
     models: ModelConfig = field(default_factory=ModelConfig)
+    series: SeriesConfig = field(default_factory=SeriesConfig)
     output: OutputConfig = OutputConfig()
 
     def to_dict(self) -> dict[str, Any]:
@@ -243,6 +331,7 @@ _SECTIONS: dict[str, type] = {
     "split": SplitConfig,
     "features": FeatureConfig,
     "models": ModelConfig,
+    "series": SeriesConfig,
     "output": OutputConfig,
 }
 
@@ -266,8 +355,8 @@ def config_from_dict(raw: dict[str, Any]) -> Config:
     ----------
     raw : dict
         Mapping with optional keys ``seed``, ``data``, ``target``, ``split``,
-        ``features``, ``models`` and ``output``. Missing keys take their
-        default values.
+        ``features``, ``models``, ``series`` and ``output``. Missing keys take
+        their default values.
 
     Returns
     -------

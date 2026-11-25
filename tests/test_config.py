@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -141,5 +142,39 @@ def test_model_section_from_mapping() -> None:
     ],
 )
 def test_invalid_model_and_output_sections(raw: dict, error: type) -> None:
+    with pytest.raises(error):
+        config_from_dict(raw)
+
+
+def test_series_section_defaults() -> None:
+    series = load_config().series
+    assert series.by == ("genre", "platform_family")
+    assert series.reference in series.models
+    assert series.params_for("gru")["input_length"] == 24
+    assert series.params_for("ets") == {}
+    plain = config_from_dict({"series": {"models": ["ets", "seasonal_naive"]}})
+    assert plain.series.params == {}
+    dated = config_from_dict({"series": {"start": date(2000, 1, 1)}})
+    assert dated.series.start == "2000-01-01"
+
+
+@pytest.mark.parametrize(
+    ("raw", "error"),
+    [
+        ({"series": {"models": ["arima"]}}, ValueError),
+        ({"series": {"models": ["ets"], "reference": "seasonal_naive"}}, ValueError),
+        ({"series": {"by": []}}, ValueError),
+        ({"series": {"by": ["na_sales"]}}, ValueError),
+        ({"series": {"horizon": 0}}, ValueError),
+        ({"series": {"min_history": 1}}, ValueError),
+        (
+            {"series": {"models": ["ets"], "reference": "ets", "params": {"gru": {}}}},
+            ValueError,
+        ),
+        ({"series": {"params": {"gru": 3}}}, TypeError),
+        ({"series": {"n_origins": 2.5}}, TypeError),
+    ],
+)
+def test_invalid_series_section(raw: dict, error: type) -> None:
     with pytest.raises(error):
         config_from_dict(raw)

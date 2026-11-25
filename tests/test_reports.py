@@ -17,14 +17,24 @@ from vgsales.evaluation.cv import CVResult, cross_validate
 from vgsales.evaluation.reports import (
     CV_JSON,
     CV_MARKDOWN,
+    SERIES_JSON,
+    SERIES_MARKDOWN,
+    SYNTHETIC,
     cv_markdown,
     cv_record,
     markdown_table,
+    series_markdown,
     to_jsonable,
     write_cv_report,
     write_holdout_report,
+    write_series_report,
 )
+from vgsales.evaluation.rolling import rolling_origin_evaluation, rolling_origins
 from vgsales.features.pipeline import make_preprocessor
+from vgsales.models.forecasting import (
+    ExponentialSmoothingForecaster,
+    SeasonalNaiveForecaster,
+)
 
 
 @pytest.fixture(scope="module")
@@ -172,3 +182,43 @@ def test_write_holdout_report(tmp_path: Path) -> None:
     text = md_path.read_text(encoding="utf-8")
     assert text.startswith("# Holdout scores: ridge")
     assert "| uncensored | 0.4000 | 0.2000 |" in text
+
+
+def test_series_report(tmp_path: Path) -> None:
+    index = pd.date_range("2000-01-01", periods=72, freq="MS")
+    rng = np.random.default_rng(1)
+    wide = pd.DataFrame(
+        rng.gamma(2.0, 0.5, size=(72, 3)), index=index, columns=["a", "b", "c"]
+    )
+    models = {
+        "seasonal_naive": SeasonalNaiveForecaster(6),
+        "ses": ExponentialSmoothingForecaster(6, seasonal=False),
+    }
+    result = rolling_origin_evaluation(
+        wide, models, rolling_origins(index, 6, 3, step=6)
+    )
+    metadata = {
+        "source": SYNTHETIC,
+        "version": "0.1.0",
+        "series": {
+            "snapshot": "2006-06-30",
+            "first_month": "2000-01",
+            "last_month": "2005-12",
+            "n_months": 72,
+            "n_segments": 3,
+            "n_titles": 400,
+        },
+    }
+    json_path, md_path = write_series_report(
+        result, tmp_path, "seasonal_naive", metadata
+    )
+    assert (json_path.name, md_path.name) == (SERIES_JSON, SERIES_MARKDOWN)
+    record = json.loads(json_path.read_text(encoding="utf-8"))
+    assert record["reference"] == "seasonal_naive"
+    assert record["summary"]["seasonal_naive"]["skill"] == 0.0
+    assert len(record["by_step"]) == 2 * 6
+    assert record["paired_tests"]["tests"]["ses"]["n_origins"] == 3
+    markdown = md_path.read_text(encoding="utf-8")
+    assert "3 segments, monthly from 2000-01 to 2005-12" in markdown
+    assert "## Paired comparison over origins" in markdown
+    assert markdown == series_markdown(result, "seasonal_naive", record["metadata"])

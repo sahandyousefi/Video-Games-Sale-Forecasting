@@ -214,3 +214,58 @@ def test_unavailable_configured_models_are_skipped(
 
     assert main([*common, "--models", "xgboost"]) == 1
     assert "unavailable" in capsys.readouterr().err
+
+
+@pytest.fixture
+def series_config(tmp_path: Path) -> Path:
+    path = tmp_path / "series.yaml"
+    path.write_text(
+        "seed: 3\nseries:\n  by: [genre]\n  min_titles: 5\n  horizon: 6\n"
+        "  n_origins: 3\n  min_history: 60\n"
+        "  models: [seasonal_naive, ses, ets, gru]\n  params:\n    gru:\n"
+        "      input_length: 12\n      hidden_size: 4\n      max_epochs: 2\n"
+        "      validation_months: 6\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_series_compares_forecasters_and_writes_reports(
+    series_config: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    original = importlib.util.find_spec
+
+    def find_spec(name: str, *args: object) -> object:
+        return None if name == "torch" else original(name, *args)
+
+    monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+    reports = tmp_path / "reports"
+    argv = ["series", "--config", str(series_config), "--synthetic", "3000"]
+    assert main([*argv, "--report-dir", str(reports)]) == 0
+    out = capsys.readouterr().out
+    assert "skipped gru: PyTorch is not installed" in out
+    assert "skill against seasonal_naive" in out
+    assert "paired signed-rank tests of per-origin rmsle" in out
+    record = json.loads((reports / "series_metrics.json").read_text("utf-8"))
+    assert set(record["summary"]) == {"seasonal_naive", "ses", "ets"}
+    assert len(record["origins"]) == 3
+    assert record["metadata"]["skipped_models"] == ["gru"]
+    markdown = (reports / "series_comparison.md").read_text("utf-8")
+    assert "The data are synthetic" in markdown
+    assert "## RMSLE by forecast step" in markdown
+
+    assert main([*argv, "--models", "gru"]) == 1
+
+
+def test_series_runs_the_gru(
+    series_config: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pytest.importorskip("torch")
+    argv = ["series", "--config", str(series_config), "--synthetic", "3000"]
+    assert main([*argv, "--models", "seasonal_naive", "gru"]) == 0
+    out = capsys.readouterr().out
+    assert "gru" in out
+    assert "wrote" not in out

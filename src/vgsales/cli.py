@@ -9,7 +9,11 @@ optional library is not installed are skipped with a note; models named with
 ``vgsales train`` fits one model on all development years, scores it once on
 the holdout of the latest release years and saves the fitted estimator.
 
-Both commands read the extract from ``data.raw_path`` unless ``--data`` or
+``vgsales series`` aggregates the tracked titles into monthly series by
+segment and compares the configured series forecasters from rolling origins.
+The GRU is skipped with a note when PyTorch is not installed.
+
+All commands read the extract from ``data.raw_path`` unless ``--data`` or
 ``--synthetic`` is given, and write JSON and markdown reports to
 ``output.report_dir``. Scores computed on synthetic data describe the
 generator, not the market; they are labelled as such and written only to an
@@ -19,6 +23,7 @@ explicit ``--report-dir``.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import logging
 import sys
 from collections.abc import Sequence
@@ -32,9 +37,16 @@ from sklearn.base import BaseEstimator
 
 from vgsales import __version__
 from vgsales.config import DEFAULT_CONFIG_PATH, Config, load_config
+from vgsales.data.loading import load_raw
 from vgsales.data.splits import ExpandingWindowSplit
 from vgsales.data.synthetic import SyntheticSpec, make_synthetic
-from vgsales.dataset import Dataset, load_dataset, prepare_dataset
+from vgsales.dataset import (
+    Dataset,
+    SeriesData,
+    load_dataset,
+    prepare_dataset,
+    prepare_series,
+)
 from vgsales.evaluation.cv import compare_models, comparison_table
 from vgsales.evaluation.metrics import PRIMARY_METRIC, regression_metrics
 from vgsales.evaluation.reports import (
@@ -42,8 +54,15 @@ from vgsales.evaluation.reports import (
     paired_tests,
     write_cv_report,
     write_holdout_report,
+    write_series_report,
+)
+from vgsales.evaluation.rolling import (
+    paired_origin_tests,
+    rolling_origin_evaluation,
+    rolling_origins,
 )
 from vgsales.features.prerelease import GROUP_COLUMN
+from vgsales.models.forecasting import SeriesForecaster, make_forecaster
 from vgsales.models.registry import is_available, make_model, missing_dependency
 from vgsales.models.target import with_target_transform
 
@@ -177,6 +196,87 @@ def _train(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
+def _series_data(args: argparse.Namespace, config: Config) -> tuple[SeriesData, str]:
+    if args.synthetic is not None:
+        raw = make_synthetic(SyntheticSpec(n_titles=args.synthetic), seed=config.seed)
+        return prepare_series(raw, config), SYNTHETIC
+    path = Path(args.data or config.data.raw_path)
+    return prepare_series(load_raw(path), config), str(path)
+
+
+def _forecasters(
+    args: argparse.Namespace, config: Config
+) -> tuple[dict[str, SeriesForecaster], list[str]]:
+    series = config.series
+    names = list(args.models or series.models)
+    skipped = []
+    if "gru" in names and importlib.util.find_spec("torch") is None:
+        if args.models:
+            raise ImportError('the GRU needs PyTorch: pip install "vgsales[dl]"')
+        names.remove("gru")
+        skipped.append("gru")
+        print('skipped gru: PyTorch is not installed (pip install "vgsales[dl]")')
+    forecasters = {}
+    for name in names:
+        params = series.params_for(name)
+        if name == "gru":
+            params.setdefault("random_state", config.seed)
+        forecasters[name] = make_forecaster(name, series.horizon, **params)
+    return forecasters, skipped
+
+
+def _series(args: argparse.Namespace, config: Config) -> int:
+    forecasters, skipped = _forecasters(args, config)
+    data, source = _series_data(args, config)
+    summary = data.summary()
+    print(f"vgsales {__version__}; source: {source}")
+    if source == SYNTHETIC:
+        print("synthetic data: scores describe the generator, not the market")
+    print(
+        f"series: {summary['n_segments']} segments, {summary['first_month']} to "
+        f"{summary['last_month']} ({summary['n_months']} months, "
+        f"{summary['n_titles']} tracked titles)"
+    )
+    series = config.series
+    origins = rolling_origins(
+        data.sales.index,
+        series.horizon,
+        series.n_origins,
+        series.origin_step,
+        series.min_history,
+    )
+    result = rolling_origin_evaluation(
+        data.sales, forecasters, origins, series.horizon, series.season
+    )
+    reference = series.reference if series.reference in forecasters else None
+    reference = reference or next(iter(forecasters))
+    print(
+        f"\nrolling origins: {', '.join(o.strftime('%Y-%m') for o in origins)}; "
+        f"horizon {series.horizon} months"
+    )
+    print(f"\nscores (skill against {reference}):")
+    table = result.summary(reference).sort_values("rmsle")
+    print(table.to_string(float_format="{:.4f}".format))
+    if len(forecasters) > 1 and len(origins) > 1:
+        paired = paired_origin_tests(result, reference)
+        print(f"\npaired signed-rank tests of per-origin rmsle against {reference}:")
+        columns = ["n_better", "n_origins", "median_diff", "p_value", "p_holm"]
+        print(paired.loc[:, columns].to_string(float_format="{:.4f}".format))
+    directory = _report_dir(args, config, source)
+    if directory is not None:
+        metadata = {
+            "source": source,
+            "version": __version__,
+            "config": config.to_dict(),
+            "series": summary,
+        }
+        if skipped:
+            metadata["skipped_models"] = skipped
+        paths = write_series_report(result, directory, reference, metadata)
+        print("\nwrote " + ", ".join(str(path) for path in paths))
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="vgsales",
@@ -225,6 +325,16 @@ def _parser() -> argparse.ArgumentParser:
     train.add_argument("--model", help="model to fit (default: models.train)")
     train.add_argument("--output", type=Path, help="path of the saved model")
     train.set_defaults(handler=_train)
+
+    series = commands.add_parser(
+        "series",
+        parents=[common],
+        help="compare monthly series forecasters from rolling origins",
+    )
+    series.add_argument(
+        "--models", nargs="+", help="forecasters to compare (default: series.models)"
+    )
+    series.set_defaults(handler=_series)
     return parser
 
 

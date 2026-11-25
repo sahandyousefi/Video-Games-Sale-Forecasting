@@ -7,9 +7,10 @@ import pytest
 from vgsales.config import config_from_dict, load_config
 from vgsales.data.cleaning import clean
 from vgsales.data.schema import LEAKAGE_COLUMNS, TARGET
+from vgsales.data.series import uncensored_end
 from vgsales.data.synthetic import SyntheticSpec, make_synthetic
 from vgsales.data.temporal import apply_release_scope
-from vgsales.dataset import Dataset, load_dataset, prepare_dataset
+from vgsales.dataset import Dataset, load_dataset, prepare_dataset, prepare_series
 from vgsales.features.prerelease import (
     GROUP_COLUMN,
     OUTPUT_COLUMNS,
@@ -110,3 +111,21 @@ def test_load_dataset_reads_csv(raw: pd.DataFrame, tmp_path: Path) -> None:
 def test_group_column_is_kept_for_splitting(dataset: Dataset) -> None:
     assert dataset.groups.name == GROUP_COLUMN
     assert dataset.groups.notna().all()
+
+
+def test_series_end_before_the_censoring_window(raw: pd.DataFrame) -> None:
+    config = config_from_dict(
+        {"series": {"by": ["genre"], "start": "2000-01-01", "min_titles": 3}}
+    )
+    data = prepare_series(raw, config)
+    end = uncensored_end(data.snapshot, config.data.censoring_window_years)
+    assert data.sales.index[-1] == end
+    assert data.sales.index[0] == pd.Timestamp("2000-01-01")
+    assert data.sales.shape == data.counts.shape
+    assert (data.counts.sum() >= 3).all()
+
+    scoped = apply_release_scope(clean(raw)[0], config.data)[0]
+    inside = scoped["release_date"].between("2000-01-01", end + pd.offsets.MonthEnd())
+    kept = scoped.loc[inside & scoped["genre"].isin(data.sales.columns)]
+    assert data.summary()["n_titles"] == len(kept)
+    assert data.sales.to_numpy().sum() == pytest.approx(kept[TARGET].sum())
