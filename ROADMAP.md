@@ -104,7 +104,6 @@ by one or more items below.
 
 ## Phase 5: Deep learning (PyTorch)
 
-- [ ] 5.6b Implement a GRU sequence model for the aggregate series with windowed training.
 - [ ] 5.7 Evaluate the sequence model with rolling-origin validation against seasonal naive and exponential smoothing baselines.
 
 ## Phase 6: Hyperparameter optimisation
@@ -189,3 +188,4 @@ by one or more items below.
 - [x] 2026-11-24: 5.4 Register the MLP in the model registry and the cross-validation runner.
 - [x] 2026-11-24: 5.5 Build aggregate sales series (sales by release month for each genre and platform family).
 - [x] 2026-11-25: 5.6a Add per-segment scaling and sliding windows with direct multi-horizon targets for the aggregate series.
+- [x] 2026-11-25: 5.6b Implement a GRU sequence model for the aggregate series with windowed training.

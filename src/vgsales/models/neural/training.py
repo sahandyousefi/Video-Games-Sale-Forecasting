@@ -186,13 +186,17 @@ def _train_epoch(
 
 @torch.no_grad()
 def evaluate_loss(model: nn.Module, dataset: Dataset, batch_size: int = 1024) -> float:
-    """Return the mean squared error of ``model`` on ``dataset`` in eval mode."""
+    """Return the mean squared error of ``model`` on ``dataset`` in eval mode.
+
+    The mean runs over all target values, so for a multi-horizon target it
+    averages over rows and horizons, like the training loss.
+    """
     model.eval()
     total, count = 0.0, 0
     for *inputs, target in make_loader(dataset, batch_size):
         error = model(*inputs) - target
         total += float((error**2).sum())
-        count += len(target)
+        count += target.numel()
     return total / count
 
 

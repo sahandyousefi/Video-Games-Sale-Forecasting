@@ -178,9 +178,10 @@ def parameter_groups(model: nn.Module, weight_decay: float) -> list[dict[str, An
     Returns
     -------
     list of dict
-        Two optimizer parameter groups: the weights of linear and embedding
-        layers with ``weight_decay``, and all other parameters (biases) with
-        zero decay. Each trainable parameter appears in exactly one group.
+        Two optimizer parameter groups: the weights of linear, embedding and
+        recurrent layers with ``weight_decay``, and all other parameters
+        (biases) with zero decay. Each trainable parameter appears in exactly
+        one group.
     """
     if weight_decay < 0:
         raise ValueError("weight_decay must be >= 0")
@@ -189,7 +190,9 @@ def parameter_groups(model: nn.Module, weight_decay: float) -> list[dict[str, An
         for name, parameter in module.named_parameters(recurse=False):
             if not parameter.requires_grad:
                 continue
-            weighted = isinstance(module, nn.Linear | nn.Embedding) and name == "weight"
+            weighted = (
+                isinstance(module, nn.Linear | nn.Embedding) and name == "weight"
+            ) or (isinstance(module, nn.RNNBase) and name.startswith("weight_"))
             (decay if weighted else no_decay).append(parameter)
     return [
         {"params": decay, "weight_decay": float(weight_decay)},
