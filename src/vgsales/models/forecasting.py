@@ -41,7 +41,7 @@ the finite value :math:`z_t = 0`.
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Any, Final, Protocol
 
 import numpy as np
 import pandas as pd
@@ -280,3 +280,48 @@ class ExponentialSmoothingForecaster(_BaseForecaster):
             index=_forecast_index(history.index[-1], self.horizon),
             columns=self.segments_,
         )
+
+
+class SeriesForecaster(Protocol):
+    """Interface shared by the series forecasters."""
+
+    horizon: int
+
+    def fit(self, wide: pd.DataFrame) -> SeriesForecaster: ...
+
+    def forecast(self, history: pd.DataFrame | None = None) -> pd.DataFrame: ...
+
+
+FORECASTER_NAMES: Final = ("seasonal_naive", "ets", "ses", "gru")
+
+
+def make_forecaster(name: str, horizon: int, **params: Any) -> SeriesForecaster:
+    """Build an unfitted series forecaster by name.
+
+    Parameters
+    ----------
+    name : {"seasonal_naive", "ets", "ses", "gru"}
+        ``ets`` is additive seasonal exponential smoothing, ``ses`` its
+        non-seasonal form and ``gru`` the network of
+        :mod:`vgsales.models.neural.sequence`, which needs the dl extras.
+    horizon : int
+        Forecast months.
+    **params
+        Further keyword arguments of the forecaster.
+
+    Returns
+    -------
+    SeriesForecaster
+        The unfitted forecaster.
+    """
+    if name == "seasonal_naive":
+        return SeasonalNaiveForecaster(horizon=horizon, **params)
+    if name == "ets":
+        return ExponentialSmoothingForecaster(horizon=horizon, **params)
+    if name == "ses":
+        return ExponentialSmoothingForecaster(horizon=horizon, seasonal=False, **params)
+    if name == "gru":
+        from vgsales.models.neural.sequence import GRUForecaster
+
+        return GRUForecaster(horizon=horizon, **params)
+    raise ValueError(f"unknown forecaster {name!r}; choose from {FORECASTER_NAMES}")

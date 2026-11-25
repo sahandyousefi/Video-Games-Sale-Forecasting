@@ -25,7 +25,7 @@ release years that the model has not seen.
 |   |-- models/                target transform, baselines, gradient boosting, registry, series baselines
 |   |   `-- neural/            PyTorch data loading, networks and training
 |   |-- tuning/                Optuna search with time-series CV
-|   |-- evaluation/            metrics, cross-validation runner, reports
+|   |-- evaluation/            metrics, cross-validation runner, rolling-origin evaluation, reports
 |   |-- explain/               SHAP and permutation importance
 |   |-- monitoring/            drift statistics and reports
 |   `-- serving/               model bundle and FastAPI application
@@ -104,7 +104,7 @@ by one or more items below.
 
 ## Phase 5: Deep learning (PyTorch)
 
-- [ ] 5.7b Evaluate the sequence model with rolling-origin validation against seasonal naive and exponential smoothing baselines.
+- [ ] 5.7c Add a `series` configuration section and a `vgsales series` command that evaluates the GRU against seasonal naive and exponential smoothing baselines from rolling origins and writes a report.
 
 ## Phase 6: Hyperparameter optimisation
 
@@ -190,3 +190,4 @@ by one or more items below.
 - [x] 2026-11-25: 5.6a Add per-segment scaling and sliding windows with direct multi-horizon targets for the aggregate series.
 - [x] 2026-11-25: 5.6b Implement a GRU sequence model for the aggregate series with windowed training.
 - [x] 2026-11-25: 5.7a Add seasonal naive and additive seasonal exponential smoothing baselines for the monthly series.
+- [x] 2026-11-25: 5.7b Implement rolling-origin evaluation for the series forecasters: refit at every origin, RMSLE, MASE and per-step scores, paired tests over origins.
