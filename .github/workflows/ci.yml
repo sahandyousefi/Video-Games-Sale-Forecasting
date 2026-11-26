@@ -52,7 +52,7 @@ jobs:
         run: python -m pytest
 
   dl:
-    name: test (deep learning extras)
+    name: test (deep learning and tuning extras)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -66,6 +66,6 @@ jobs:
           python -m pip install --upgrade pip
           # The CPU wheel avoids downloading the CUDA libraries.
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install -e ".[dev,dl]"
+          python -m pip install -e ".[dev,dl,tune]"
       - name: Test
         run: python -m pytest

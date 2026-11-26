@@ -104,6 +104,20 @@ def test_malformed_files_are_rejected(tmp_path, content: str, message: str) -> N
         read_tuned(path)
 
 
+def test_mlp_architecture_is_restored_on_load(tmp_path) -> None:
+    params = {"learning_rate": 1e-3, "n_layers": 3, "width": 256, "batch_size": 512}
+    save_tuned(_result("mlp", params), tmp_path)
+    assert yaml.safe_load(tuned_path(tmp_path, "mlp").read_text())["params"] == params
+    assert load_tuned("mlp", tmp_path) == {
+        "learning_rate": 1e-3,
+        "batch_size": 512,
+        "hidden": (256, 128, 64),
+    }
+    save_tuned(_result("mlp", {**params, "batch_size": 100}), tmp_path)
+    with pytest.raises(ValueError, match="batch_size=100 is outside"):
+        load_tuned("mlp", tmp_path)
+
+
 def test_overrides_cover_only_models_with_files(tmp_path) -> None:
     save_tuned(_result(), tmp_path)
     overrides = tuned_overrides(["ridge", "lightgbm", "xgboost"], tmp_path)

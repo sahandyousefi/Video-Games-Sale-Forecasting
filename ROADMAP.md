@@ -108,7 +108,6 @@ by one or more items below.
 
 ## Phase 6: Hyperparameter optimisation
 
-- [ ] 6.4 Add an Optuna search for the embedding MLP.
 
 ## Phase 7: Prediction intervals
 
@@ -192,3 +191,4 @@ by one or more items below.
 - [x] 2026-11-25: 6.1 Define Optuna search spaces for XGBoost, LightGBM and CatBoost.
 - [x] 2026-11-26: 6.2 Implement the Optuna objective on the expanding-window cross-validator with median pruning.
 - [x] 2026-11-26: 6.3 Persist best parameters to `configs/tuned/` and add a `vgsales tune` command.
+- [x] 2026-11-26: 6.4 Add an Optuna search for the embedding MLP.

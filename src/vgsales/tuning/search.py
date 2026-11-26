@@ -57,7 +57,13 @@ from vgsales.evaluation.metrics import (
     regression_metrics,
 )
 from vgsales.models.registry import make_model
-from vgsales.tuning.spaces import SearchSpace, get_space, suggest_params
+from vgsales.tuning.spaces import (
+    SearchSpace,
+    get_space,
+    model_keys,
+    suggest_params,
+    to_model_params,
+)
 
 FOLD_SCORES_ATTR: Final = "fold_scores"
 TRIAL_COLUMNS: Final = (
@@ -119,7 +125,8 @@ class FoldObjective:
         Search space.
     fixed_params : mapping, optional
         Keyword arguments applied in every trial, for example a smaller
-        ``n_estimators``. They must not overlap the search space.
+        ``n_estimators``. They must not set an argument that the search
+        sets, including ``hidden`` when the MLP architecture is searched.
     target_transform : {"log1p", "identity"}, default "log1p"
         Scale on which the models are fitted.
     metric : str, default "rmsle"
@@ -140,7 +147,7 @@ class FoldObjective:
         metric: str = PRIMARY_METRIC,
     ) -> None:
         fixed = dict(fixed_params or {})
-        overlap = sorted(set(fixed) & set(space))
+        overlap = sorted(set(fixed) & model_keys(name, space))
         if overlap:
             raise ValueError(f"parameters both fixed and searched: {overlap}")
         if not folds:
@@ -159,7 +166,7 @@ class FoldObjective:
     def __call__(self, trial: Any) -> float:
         """Score the configuration sampled by ``trial``, pruning between folds."""
         optuna = _require_optuna()
-        params = suggest_params(trial, self.space)
+        params = to_model_params(self.name, suggest_params(trial, self.space))
         estimator = make_model(self.name, self.config, **self.fixed_params, **params)
         scores: list[float] = []
         for k, fold in enumerate(self.folds):

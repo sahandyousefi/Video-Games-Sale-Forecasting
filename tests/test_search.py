@@ -19,7 +19,13 @@ from vgsales.tuning.search import (
     direction_of,
     tune,
 )
-from vgsales.tuning.spaces import FloatParam, check_params
+from vgsales.tuning.spaces import (
+    FloatParam,
+    check_params,
+    funnel,
+    get_space,
+    to_model_params,
+)
 
 RIDGE_SPACE = {"alpha": FloatParam(1e-2, 1e6, log=True)}
 
@@ -205,3 +211,31 @@ def test_missing_optuna_has_an_install_hint(
     X, y = data
     with pytest.raises(ImportError, match=r"vgsales\[tune\]"):
         tune("ridge", config, X, y, splitter, n_trials=1, space=RIDGE_SPACE)
+
+
+def test_fixed_hidden_conflicts_with_an_architecture_search(
+    config, data, splitter
+) -> None:
+    X, y = data
+    folds = resolve_folds(splitter, X)
+    space = get_space("mlp")
+    with pytest.raises(ValueError, match=r"both fixed and searched: \['hidden'\]"):
+        FoldObjective("mlp", config, X, y, folds, space, fixed_params={"hidden": [8]})
+
+
+def test_mlp_search_builds_the_architecture(optuna, config, data, splitter) -> None:
+    if not is_available("mlp"):
+        pytest.skip("torch is not installed")
+    X, y = data
+    fixed = {"max_epochs": 3, "patience": 2}
+    result = tune("mlp", config, X, y, splitter, n_trials=2, fixed_params=fixed)
+    check_params("mlp", result.best_params)
+    assert {"n_layers", "width", "batch_size"} <= set(result.trials.columns)
+
+    params = to_model_params("mlp", result.best_params)
+    hidden = funnel(result.best_params["width"], result.best_params["n_layers"])
+    assert params["hidden"] == hidden
+    replay = cross_validate(
+        make_model("mlp", config, **fixed, **params), X, y, splitter
+    )
+    assert replay.per_fold["rmsle"].tolist() == pytest.approx(result.best_fold_scores)

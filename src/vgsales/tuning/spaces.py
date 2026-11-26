@@ -1,11 +1,12 @@
-r"""Search spaces for the gradient-boosting models.
+r"""Search spaces for the gradient-boosting models and the embedding MLP.
 
-Each space maps a keyword argument of :func:`vgsales.models.registry.make_model`
-to a distribution. The number of boosting rounds is not searched: every
-trial keeps the configured maximum ``n_estimators`` and selects the number of
-rounds by temporal early stopping (:mod:`vgsales.models.boosting`), so the
-learning rate is searched jointly with the tree parameters and the selected
-round count adapts to it.
+Each space maps a parameter name to a distribution. For the boosting models
+every name is a keyword argument of :func:`vgsales.models.registry.make_model`.
+The number of boosting rounds is not searched: every trial keeps the
+configured maximum ``n_estimators`` and selects the number of rounds by
+temporal early stopping (:mod:`vgsales.models.boosting`), so the learning
+rate is searched jointly with the tree parameters and the selected round
+count adapts to it.
 
 Scale parameters that span orders of magnitude (learning rate, regularization
 strengths, minimum leaf sizes, number of leaves) are sampled on a log scale,
@@ -23,6 +24,20 @@ defaults and the configured values of ``configs/default.yaml``:
 - CatBoost (Prokhorenkova et al., 2018): depth of the oblivious trees,
   :math:`\ell_2` penalty, the random strength that perturbs split scores, and
   the row subsampling rate.
+
+For the entity-embedding MLP (Guo and Berkhahn, 2016) the number of epochs is
+likewise selected by temporal early stopping, and the search covers the
+AdamW learning rate and decoupled weight decay (Loshchilov and Hutter, 2019),
+the dropout rates after the hidden layers and on the embeddings (Srivastava
+et al., 2014), the cap on the embedding width and the batch size. The
+architecture is searched through two parameters that are not estimator
+arguments: the depth :math:`L` (``n_layers``) and the width :math:`w` of the
+first hidden layer (``width``). They define a funnel whose layer :math:`l`
+has :math:`\max(\lfloor w / 2^{l-1} \rfloor, 8)` units, for
+:math:`l = 1, \dots, L`, so that one integer per dimension replaces a
+variable-length list. :func:`to_model_params` turns them into the ``hidden``
+argument. The configured ``hidden: [128, 64]`` is the funnel with
+:math:`L = 2` and :math:`w = 128`.
 
 The spaces are plain data. :func:`suggest_params` draws one configuration
 from an Optuna trial and is the only function here that needs Optuna.
@@ -75,7 +90,28 @@ class IntParam:
         return self.low <= value <= self.high
 
 
-Param = FloatParam | IntParam
+@dataclass(frozen=True)
+class CategoricalParam:
+    """Parameter that takes one of a few unordered values."""
+
+    choices: tuple[Any, ...]
+
+    def __post_init__(self) -> None:
+        choices = tuple(self.choices)
+        object.__setattr__(self, "choices", choices)
+        if len(choices) < 2:
+            raise ValueError("a categorical parameter needs at least two choices")
+        if len(set(choices)) != len(choices):
+            raise ValueError("categorical choices must be distinct")
+        if not all(isinstance(c, str | int | float) for c in choices):
+            raise TypeError("categorical choices must be str, int or float")
+
+    def contains(self, value: Any) -> bool:
+        """Whether ``value`` is one of the choices."""
+        return not isinstance(value, bool) and value in self.choices
+
+
+Param = FloatParam | IntParam | CategoricalParam
 
 SearchSpace = Mapping[str, Param]
 
@@ -108,7 +144,66 @@ SEARCH_SPACES: Final[dict[str, dict[str, Param]]] = {
         "random_strength": FloatParam(0.01, 10.0, log=True),
         "subsample": FloatParam(0.5, 1.0),
     },
+    "mlp": {
+        "learning_rate": FloatParam(1e-4, 1e-2, log=True),
+        "weight_decay": FloatParam(1e-6, 1e-2, log=True),
+        "dropout": FloatParam(0.0, 0.5),
+        "embedding_dropout": FloatParam(0.0, 0.3),
+        "max_embedding_dim": IntParam(4, 32, log=True),
+        "batch_size": CategoricalParam((128, 256, 512)),
+        "n_layers": IntParam(1, 3),
+        "width": IntParam(32, 512, log=True),
+    },
 }
+
+# Searched parameters that are combined into one estimator argument.
+ARCHITECTURE_PARAMS: Final = {"mlp": ("n_layers", "width")}
+MIN_LAYER_WIDTH: Final = 8
+
+
+def funnel(width: int, n_layers: int) -> tuple[int, ...]:
+    """Hidden layer widths that halve from ``width`` over ``n_layers`` layers.
+
+    Raises
+    ------
+    ValueError
+        If ``width`` or ``n_layers`` is smaller than one.
+    """
+    if width < 1 or n_layers < 1:
+        raise ValueError("width and n_layers must be >= 1")
+    return tuple(max(width // 2**layer, MIN_LAYER_WIDTH) for layer in range(n_layers))
+
+
+def to_model_params(name: str, params: Mapping[str, Any]) -> dict[str, Any]:
+    """Turn sampled parameters into keyword arguments of ``make_model``.
+
+    For the MLP, ``n_layers`` and ``width`` are replaced by ``hidden``
+    (:func:`funnel`). Other parameters pass through unchanged.
+
+    Raises
+    ------
+    ValueError
+        If only one of the architecture parameters of ``name`` is given.
+    """
+    model_params = dict(params)
+    keys = ARCHITECTURE_PARAMS.get(name, ())
+    present = [key for key in keys if key in model_params]
+    if not present:
+        return model_params
+    if len(present) != len(keys):
+        raise ValueError(f"{name} needs all of {keys} to build its architecture")
+    n_layers, width = model_params.pop("n_layers"), model_params.pop("width")
+    model_params["hidden"] = funnel(width, n_layers)
+    return model_params
+
+
+def model_keys(name: str, space: SearchSpace) -> set[str]:
+    """Keyword arguments of ``make_model`` that a search over ``space`` sets."""
+    keys = set(space)
+    architecture = set(ARCHITECTURE_PARAMS.get(name, ()))
+    if architecture & keys:
+        keys = (keys - architecture) | {"hidden"}
+    return keys
 
 
 def get_space(name: str) -> dict[str, Param]:
@@ -140,7 +235,8 @@ def suggest_params(trial: Any, space: SearchSpace) -> dict[str, Any]:
     Returns
     -------
     dict
-        Keyword arguments for :func:`vgsales.models.registry.make_model`.
+        Sampled values keyed by parameter name; :func:`to_model_params` turns
+        them into keyword arguments of :func:`vgsales.models.registry.make_model`.
     """
     params: dict[str, Any] = {}
     for name, param in space.items():
@@ -150,6 +246,8 @@ def suggest_params(trial: Any, space: SearchSpace) -> dict[str, Any]:
             params[name] = trial.suggest_float(
                 name, param.low, param.high, log=param.log
             )
+        elif isinstance(param, CategoricalParam):
+            params[name] = trial.suggest_categorical(name, param.choices)
         else:
             raise TypeError(f"unsupported parameter type for {name}: {param!r}")
     return params

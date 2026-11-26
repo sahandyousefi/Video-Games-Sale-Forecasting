@@ -24,7 +24,7 @@ import yaml
 
 from vgsales.evaluation.reports import tuning_record
 from vgsales.tuning.search import TuningResult
-from vgsales.tuning.spaces import check_params
+from vgsales.tuning.spaces import check_params, to_model_params
 
 TUNED_SUFFIX: Final = ".yaml"
 _HEADER: Final = (
@@ -91,7 +91,9 @@ def load_tuned(name: str, directory: str | Path) -> dict[str, Any]:
     Returns
     -------
     dict
-        Keyword arguments for :func:`vgsales.models.registry.make_model`.
+        Keyword arguments for :func:`vgsales.models.registry.make_model`,
+        with searched architecture parameters turned into estimator
+        arguments by :func:`vgsales.tuning.spaces.to_model_params`.
 
     Raises
     ------
@@ -107,7 +109,7 @@ def load_tuned(name: str, directory: str | Path) -> dict[str, Any]:
         raise ValueError(f"{path} holds parameters of {record['model']!r}")
     params = dict(record["params"])
     check_params(name, params)
-    return params
+    return to_model_params(name, params)
 
 
 def tuned_overrides(
