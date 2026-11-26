@@ -107,7 +107,6 @@ by one or more items below.
 
 ## Phase 6: Hyperparameter optimisation
 
-- [ ] 6.2 Implement the Optuna objective on the expanding-window cross-validator with median pruning.
 - [ ] 6.3 Persist best parameters to `configs/tuned/` and add a `vgsales tune` command.
 - [ ] 6.4 Add an Optuna search for the embedding MLP.
 
@@ -191,3 +190,4 @@ by one or more items below.
 - [x] 2026-11-25: 5.7b Implement rolling-origin evaluation for the series forecasters: refit at every origin, RMSLE, MASE and per-step scores, paired tests over origins.
 - [x] 2026-11-25: 5.7c Add a `series` configuration section and a `vgsales series` command that evaluates the GRU against seasonal naive and exponential smoothing baselines from rolling origins and writes a report.
 - [x] 2026-11-25: 6.1 Define Optuna search spaces for XGBoost, LightGBM and CatBoost.
+- [x] 2026-11-26: 6.2 Implement the Optuna objective on the expanding-window cross-validator with median pruning.

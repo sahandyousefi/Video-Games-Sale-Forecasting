@@ -100,7 +100,14 @@ class CVResult:
         return table.loc[list(AGGREGATE_ROWS), list(self.metrics)]
 
 
-def _as_target(y: ArrayLike, n: int) -> np.ndarray:
+def check_target(y: ArrayLike, n: int) -> np.ndarray:
+    """Return ``y`` as a float array of ``n`` finite, non-negative sales.
+
+    Raises
+    ------
+    ValueError
+        If ``y`` has the wrong shape or invalid values.
+    """
     values = np.asarray(y, dtype=np.float64)
     if values.shape != (n,):
         raise ValueError(f"y must be one-dimensional with {n} values")
@@ -109,29 +116,84 @@ def _as_target(y: ArrayLike, n: int) -> np.ndarray:
     return values
 
 
-def _resolve_folds(
+def resolve_folds(
     cv: ExpandingWindowSplit | Sequence[Fold],
     X: pd.DataFrame,
-    groups: ArrayLike | None,
+    groups: ArrayLike | None = None,
 ) -> list[Fold]:
+    """Return the folds of ``cv`` for ``X`` and check that they are disjoint.
+
+    Parameters
+    ----------
+    cv : ExpandingWindowSplit or sequence of Fold
+        Splitter, or precomputed folds with positional indices into ``X``.
+    X : pandas.DataFrame
+        Feature frame.
+    groups : array-like, optional
+        Group labels passed to the splitter for purging.
+
+    Raises
+    ------
+    TypeError
+        If ``cv`` has the wrong type.
+    ValueError
+        If ``groups`` is given with precomputed folds, a fold indexes beyond
+        ``X`` or two validation blocks overlap.
+    """
     if isinstance(cv, ExpandingWindowSplit):
-        return cv.folds(X, groups)
-    folds = list(cv)
-    if not folds or not all(isinstance(f, Fold) for f in folds):
-        raise TypeError("cv must be an ExpandingWindowSplit or a sequence of Fold")
-    if groups is not None:
-        raise ValueError("groups are only used with an ExpandingWindowSplit")
-    return folds
-
-
-def _check_disjoint(folds: list[Fold], n: int) -> None:
-    seen = np.zeros(n, dtype=bool)
+        folds = cv.folds(X, groups)
+    else:
+        folds = list(cv)
+        if not folds or not all(isinstance(f, Fold) for f in folds):
+            raise TypeError("cv must be an ExpandingWindowSplit or a sequence of Fold")
+        if groups is not None:
+            raise ValueError("groups are only used with an ExpandingWindowSplit")
+    seen = np.zeros(len(X), dtype=bool)
     for k, fold in enumerate(folds):
-        if fold.val_idx.size and fold.val_idx.max() >= n:
-            raise ValueError(f"fold {k} indexes beyond the {n} rows of X")
+        if fold.val_idx.size and fold.val_idx.max() >= len(X):
+            raise ValueError(f"fold {k} indexes beyond the {len(X)} rows of X")
         if seen[fold.val_idx].any():
             raise ValueError(f"validation rows of fold {k} overlap an earlier fold")
         seen[fold.val_idx] = True
+    return folds
+
+
+def fit_fold(
+    estimator: BaseEstimator,
+    X: pd.DataFrame,
+    target: np.ndarray,
+    fold: Fold,
+    target_transform: str = "log1p",
+) -> tuple[np.ndarray, float]:
+    """Fit a clone of ``estimator`` on one fold and predict its validation rows.
+
+    Parameters
+    ----------
+    estimator : estimator
+        Unfitted regressor; it is cloned and wrapped with the target
+        transform.
+    X : pandas.DataFrame
+        Feature frame.
+    target : numpy.ndarray
+        Observed sales on the original scale, aligned with ``X``.
+    fold : Fold
+        Positional training and validation indices.
+    target_transform : {"log1p", "identity"}, default "log1p"
+        Scale on which the estimator is fitted.
+
+    Returns
+    -------
+    y_pred : numpy.ndarray
+        Predictions for the validation rows on the original scale.
+    fit_seconds : float
+        Wall-clock time of the fit.
+    """
+    model = with_target_transform(clone(estimator), target_transform)
+    start = time.perf_counter()
+    model.fit(X.iloc[fold.train_idx], target[fold.train_idx])
+    elapsed = time.perf_counter() - start
+    y_pred = np.asarray(model.predict(X.iloc[fold.val_idx]), dtype=np.float64)
+    return y_pred, elapsed
 
 
 def cross_validate(
@@ -181,17 +243,12 @@ def cross_validate(
     """
     if not isinstance(X, pd.DataFrame):
         raise TypeError("X must be a pandas DataFrame")
-    target = _as_target(y, len(X))
-    folds = _resolve_folds(cv, X, groups)
-    _check_disjoint(folds, len(X))
+    target = check_target(y, len(X))
+    folds = resolve_folds(cv, X, groups)
 
     rows, predictions = [], []
     for k, fold in enumerate(folds):
-        model = with_target_transform(clone(estimator), target_transform)
-        start = time.perf_counter()
-        model.fit(X.iloc[fold.train_idx], target[fold.train_idx])
-        elapsed = time.perf_counter() - start
-        y_pred = np.asarray(model.predict(X.iloc[fold.val_idx]), dtype=np.float64)
+        y_pred, elapsed = fit_fold(estimator, X, target, fold, target_transform)
         y_true = target[fold.val_idx]
         rows.append(
             {"fit_seconds": elapsed, **regression_metrics(y_true, y_pred, metrics)}
@@ -248,7 +305,7 @@ def compare_models(
         raise ValueError("estimators must not be empty")
     if not isinstance(X, pd.DataFrame):
         raise TypeError("X must be a pandas DataFrame")
-    folds = _resolve_folds(cv, X, groups)
+    folds = resolve_folds(cv, X, groups)
     results = {}
     for name, estimator in estimators.items():
         logger.info("cross-validating %s on %d folds", name, len(folds))

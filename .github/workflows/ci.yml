@@ -35,7 +35,7 @@ jobs:
         run: python -m pytest --cov=vgsales --cov-report=term-missing
 
   gbm:
-    name: test (gradient boosting extras)
+    name: test (gradient boosting and tuning extras)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,7 +47,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev,gbm]"
+          python -m pip install -e ".[dev,gbm,tune]"
       - name: Test
         run: python -m pytest
 

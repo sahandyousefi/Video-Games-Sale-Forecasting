@@ -1,5 +1,6 @@
 """Hyperparameter search with Optuna on the expanding-window folds.
 
 Optuna is an optional dependency (``pip install "vgsales[tune]"``). The search
-spaces in :mod:`vgsales.tuning.spaces` are plain data and import without it.
+spaces in :mod:`vgsales.tuning.spaces` are plain data and import without it,
+and :func:`vgsales.tuning.search.tune` imports Optuna when a search runs.
 """
