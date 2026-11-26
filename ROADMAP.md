@@ -26,7 +26,7 @@ release years that the model has not seen.
 |   |-- models/                target transform, baselines, gradient boosting, registry, series baselines
 |   |   `-- neural/            PyTorch data loading, networks and training
 |   |-- tuning/                search spaces, Optuna search with time-series CV, tuned-parameter files
-|   |-- evaluation/            metrics, cross-validation runner, rolling-origin evaluation, reports
+|   |-- evaluation/            point and interval metrics, cross-validation runner, rolling-origin evaluation, reports
 |   |-- explain/               SHAP and permutation importance
 |   |-- monitoring/            drift statistics and reports
 |   `-- serving/               model bundle and FastAPI application
@@ -111,7 +111,8 @@ by one or more items below.
 
 ## Phase 7: Prediction intervals
 
-- [ ] 7.1 Add LightGBM quantile regression (pinball loss) and interval metrics: coverage, mean width, interval score.
+- [ ] 7.1b Add LightGBM quantile regression: one booster per quantile level with temporal early stopping on the pinball loss, and non-crossing quantiles.
+- [ ] 7.1c Evaluate prediction intervals on the expanding-window folds: per-fold and pooled interval metrics, and an `intervals` configuration section.
 - [ ] 7.2 Add split conformal prediction with a calibration set drawn from later release years.
 - [ ] 7.3 Add conformalized quantile regression.
 - [ ] 7.4 Evaluate coverage by release year and genre, with a reliability figure.
@@ -192,3 +193,4 @@ by one or more items below.
 - [x] 2026-11-26: 6.2 Implement the Optuna objective on the expanding-window cross-validator with median pruning.
 - [x] 2026-11-26: 6.3 Persist best parameters to `configs/tuned/` and add a `vgsales tune` command.
 - [x] 2026-11-26: 6.4 Add an Optuna search for the embedding MLP.
+- [x] 2026-11-26: 7.1a Add interval metrics: pinball loss, coverage with the shares below and above the interval, mean width and interval score on both scales.
