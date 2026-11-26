@@ -14,6 +14,8 @@ from vgsales.cli import build_model, main
 from vgsales.config import DEFAULT_CONFIG_PATH, config_from_dict, load_config
 from vgsales.data.synthetic import SyntheticSpec, make_synthetic
 from vgsales.dataset import prepare_dataset
+from vgsales.models.registry import is_available
+from vgsales.tuning.store import load_tuned, read_tuned
 
 ROOT = DEFAULT_CONFIG_PATH.parents[1]
 N_TITLES = "900"
@@ -269,3 +271,70 @@ def test_series_runs_the_gru(
     out = capsys.readouterr().out
     assert "gru" in out
     assert "wrote" not in out
+
+
+@pytest.fixture
+def tune_config(tmp_path: Path) -> Path:
+    pytest.importorskip("optuna")
+    if not is_available("lightgbm"):
+        pytest.skip("lightgbm is not installed")
+    path = tmp_path / "tune.yaml"
+    path.write_text(
+        "seed: 3\nsplit:\n  cv_folds: 3\n  min_train_years: 5\n"
+        "models:\n  evaluate: [ridge, lightgbm]\n  train: lightgbm\n"
+        "  params:\n    lightgbm:\n      n_estimators: 30\n"
+        "      early_stopping_rounds: 10\n"
+        "tuning:\n  n_trials: 4\n  n_startup_trials: 2\n"
+        f"output:\n  tuned_dir: {tmp_path / 'tuned'}\n"
+        f"  model_dir: {tmp_path / 'models'}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_tuned_parameters_are_saved_and_applied(
+    tune_config: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tuned, reports = tmp_path / "tuned", tmp_path / "reports"
+    common = ["--config", str(tune_config), "--synthetic", N_TITLES]
+    argv = ["tune", *common, "--model", "lightgbm", "--output-dir", str(tuned)]
+    assert main([*argv, "--report-dir", str(reports)]) == 0
+    out = capsys.readouterr().out
+    assert "search of lightgbm: 4 trials" in out
+    assert "per-fold rmsle of the best configuration" in out
+    assert sorted(path.name for path in reports.iterdir()) == [
+        "tuning_lightgbm.json",
+        "tuning_lightgbm.md",
+    ]
+    best = load_tuned("lightgbm", tuned)
+    fold_scores = read_tuned(tuned / "lightgbm.yaml")["objective"]["fold_scores"]
+
+    assert main(["evaluate", *common, "--tuned", "--report-dir", str(reports)]) == 0
+    out = capsys.readouterr().out
+    assert f"lightgbm: tuned parameters from {tuned / 'lightgbm.yaml'}" in out
+    assert "ridge:" not in out
+    record = json.loads((reports / "cv_metrics.json").read_text(encoding="utf-8"))
+    assert record["metadata"]["tuned_params"] == {"lightgbm": best}
+    per_fold = record["models"]["lightgbm"]["per_fold"]
+    assert [fold["rmsle"] for fold in per_fold] == pytest.approx(fold_scores)
+
+    assert main(["train", *common, "--tuned"]) == 0
+    artifact = joblib.load(tmp_path / "models" / "lightgbm.joblib")
+    assert artifact["tuned_params"] == best
+
+
+def test_tune_on_synthetic_data_saves_only_to_an_explicit_dir(
+    tune_config: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    common = ["--config", str(tune_config), "--synthetic", N_TITLES]
+    assert main(["tune", *common, "--model", "lightgbm", "--n-trials", "2"]) == 0
+    out = capsys.readouterr().out
+    assert "search of lightgbm: 2 trials" in out
+    assert "saved" not in out
+    assert not (tmp_path / "tuned").exists()
+
+    assert main(["evaluate", *common, "--tuned", "--models", "lightgbm"]) == 0
+    assert "lightgbm: no tuned parameters" in capsys.readouterr().out
+
+    assert main(["tune", *common, "--model", "ridge"]) == 1
+    assert "no search space for 'ridge'" in capsys.readouterr().err

@@ -9,7 +9,9 @@ two or more models are compared on two or more folds, the cross-validation
 report adds paired Wilcoxon signed-rank tests of the per-fold primary metric
 against the best model (:mod:`vgsales.evaluation.significance`). The series
 report holds the rolling-origin scores of the monthly forecasters
-(:mod:`vgsales.evaluation.rolling`).
+(:mod:`vgsales.evaluation.rolling`). The tuning report holds the best
+configuration of a hyperparameter search, its per-fold scores and the trial
+table (:mod:`vgsales.tuning.search`).
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ import math
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -29,10 +31,14 @@ from vgsales.evaluation.metrics import GREATER_IS_BETTER, PRIMARY_METRIC
 from vgsales.evaluation.rolling import RollingResult, paired_origin_tests
 from vgsales.evaluation.significance import paired_comparison
 
+if TYPE_CHECKING:
+    from vgsales.tuning.search import TuningResult
+
 CV_JSON = "cv_metrics.json"
 CV_MARKDOWN = "cv_comparison.md"
 SERIES_JSON = "series_metrics.json"
 SERIES_MARKDOWN = "series_comparison.md"
+TOP_TRIALS = 10
 SYNTHETIC = "synthetic"
 
 _POOLED_COLUMNS = ("rmsle", "mae_log", "r2_log", "rmse", "mae")
@@ -147,8 +153,7 @@ def _year_range(start: pd.Series, end: pd.Series) -> list[str]:
     return [str(a) if a == b else f"{a}-{b}" for a, b in zip(start, end, strict=True)]
 
 
-def _fold_table(result: CVResult) -> pd.DataFrame:
-    folds = result.per_fold
+def _fold_table(folds: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "fold": folds["fold"],
@@ -251,7 +256,7 @@ def cv_markdown(
         "## Folds",
         "Expanding window over release years. Training rows whose title has "
         "rows in the validation block are purged.",
-        markdown_table(_fold_table(first), index=False),
+        markdown_table(_fold_table(first.per_fold), index=False),
         "## Scores",
         f"{_LABELS[PRIMARY_METRIC]} is given as the mean and sample standard "
         "deviation across folds. Pooled columns are computed once on the "
@@ -513,5 +518,127 @@ def write_series_report(
     json_path = _write(directory / SERIES_JSON, _dump(record))
     md_path = _write(
         directory / SERIES_MARKDOWN, series_markdown(result, reference, metadata)
+    )
+    return json_path, md_path
+
+
+def tuning_record(
+    result: TuningResult, metadata: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    """Collect the best configuration of a search and its provenance.
+
+    Parameters
+    ----------
+    result : TuningResult
+        Outcome of :func:`vgsales.tuning.search.tune`.
+    metadata : mapping, optional
+        Provenance such as ``source`` and ``version``.
+
+    Returns
+    -------
+    dict
+        Keys ``model``, ``params`` (sampled parameters of the best trial),
+        ``objective``, ``search`` and ``metadata``, as plain Python types.
+    """
+    return to_jsonable(
+        {
+            "model": result.name,
+            "params": result.best_params,
+            "objective": {
+                "metric": result.metric,
+                "direction": result.direction,
+                "value": result.best_value,
+                "fold_scores": list(result.best_fold_scores),
+                "n_folds": result.n_folds,
+            },
+            "search": {
+                "n_trials": result.n_trials(),
+                "n_complete": result.n_trials("complete"),
+                "n_pruned": result.n_trials("pruned"),
+                "seed": result.seed,
+                "fixed_params": result.fixed_params,
+            },
+            "metadata": dict(metadata or {}),
+        }
+    )
+
+
+def _format_param(value: Any) -> str:
+    return f"{value:.4g}" if isinstance(value, float) else str(value)
+
+
+def tuning_markdown(
+    result: TuningResult, metadata: Mapping[str, Any] | None = None
+) -> str:
+    """Render a hyperparameter search as a markdown document.
+
+    Parameters
+    ----------
+    result : TuningResult
+        Outcome of :func:`vgsales.tuning.search.tune`.
+    metadata : mapping, optional
+        As for :func:`cv_markdown`.
+
+    Returns
+    -------
+    str
+        Markdown document.
+    """
+    metadata = metadata or {}
+    label = _LABELS.get(result.metric, result.metric)
+    best = "lowest" if result.direction == "minimize" else "highest"
+    folds = _fold_table(result.folds)
+    folds[label] = list(result.best_fold_scores)
+    params = pd.DataFrame(
+        {"value": [_format_param(value) for value in result.best_params.values()]},
+        index=pd.Index(list(result.best_params), name="parameter"),
+    )
+    complete = result.trials[result.trials["state"] == "complete"]
+    top = complete.sort_values("value", ascending=result.direction == "minimize")
+    top = top.drop(columns=["state", "partial_value", "n_folds"]).head(TOP_TRIALS)
+    fixed = ", ".join(f"{k}={v}" for k, v in result.fixed_params.items()) or "none"
+    sections = [
+        f"# Hyperparameter search: {result.name}",
+        "\n".join(_source_lines(metadata)),
+        f"The tree-structured Parzen estimator proposed {result.n_trials()} "
+        f"configurations (sampler seed {result.seed}). Completed: "
+        f"{result.n_trials('complete')}; pruned by the median rule: "
+        f"{result.n_trials('pruned')}. The "
+        f"objective is the mean {label} over {result.n_folds} expanding-window "
+        "folds of the development years; the holdout is not used. Parameters "
+        f"held fixed: {fixed}. The best fold mean is optimistically biased as an "
+        "estimate of the error of the selected configuration, because the same "
+        "folds selected it.",
+        "## Best configuration",
+        f"Fold mean {label}: {result.best_value:.4f}.",
+        markdown_table(params),
+        markdown_table(folds, index=False),
+        f"## Completed trials ({best} {label} first, at most {TOP_TRIALS})",
+        markdown_table(top, index=False),
+    ]
+    return "\n\n".join(sections) + "\n"
+
+
+def write_tuning_report(
+    result: TuningResult,
+    directory: str | Path,
+    metadata: Mapping[str, Any] | None = None,
+) -> tuple[Path, Path]:
+    """Write ``tuning_<name>.json`` and ``tuning_<name>.md`` to ``directory``.
+
+    The JSON file holds the record of :func:`tuning_record` and every trial.
+
+    Returns
+    -------
+    tuple of Path
+        Paths of the JSON and markdown files.
+    """
+    metadata = {"created": _now(), **(metadata or {})}
+    directory = Path(directory)
+    record = tuning_record(result, metadata)
+    record["trials"] = to_jsonable(result.trials.to_dict(orient="records"))
+    json_path = _write(directory / f"tuning_{result.name}.json", _dump(record))
+    md_path = _write(
+        directory / f"tuning_{result.name}.md", tuning_markdown(result, metadata)
     )
     return json_path, md_path

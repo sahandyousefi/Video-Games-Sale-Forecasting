@@ -11,6 +11,7 @@ from typing import Any
 import yaml
 
 from vgsales.data.schema import assert_no_leakage
+from vgsales.evaluation.metrics import METRIC_NAMES, PRIMARY_METRIC
 from vgsales.models.forecasting import FORECASTER_NAMES
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "default.yaml"
@@ -300,11 +301,48 @@ class SeriesConfig:
 
 
 @dataclass(frozen=True)
+class TuningConfig:
+    """Hyperparameter search on the expanding-window folds.
+
+    Each search runs ``n_trials`` trials, or until ``timeout`` seconds have
+    passed when ``n_trials`` is None, and minimizes or maximizes the fold
+    mean of ``metric``. Trials are pruned by the median rule after
+    ``n_startup_trials`` completed trials, never before ``n_warmup_steps``
+    folds have been scored (:mod:`vgsales.tuning.search`).
+    """
+
+    n_trials: int | None = 50
+    timeout: float | None = None
+    metric: str = PRIMARY_METRIC
+    n_startup_trials: int = 5
+    n_warmup_steps: int = 1
+
+    def __post_init__(self) -> None:
+        if self.n_trials is None and self.timeout is None:
+            raise ValueError("tuning needs n_trials, timeout or both")
+        if self.n_trials is not None:
+            _require_int("tuning.n_trials", self.n_trials, 1)
+        if self.timeout is not None:
+            timeout = self.timeout
+            if isinstance(timeout, bool) or not isinstance(timeout, int | float):
+                raise TypeError(f"tuning.timeout must be a number, got {timeout!r}")
+            if timeout <= 0:
+                raise ValueError("tuning.timeout must be positive")
+        if self.metric not in METRIC_NAMES:
+            raise ValueError(
+                f"tuning.metric must be one of {METRIC_NAMES}, got {self.metric!r}"
+            )
+        _require_int("tuning.n_startup_trials", self.n_startup_trials, 0)
+        _require_int("tuning.n_warmup_steps", self.n_warmup_steps, 0)
+
+
+@dataclass(frozen=True)
 class OutputConfig:
-    """Directories for fitted models and generated reports."""
+    """Directories for fitted models, generated reports and tuned parameters."""
 
     model_dir: str = "models"
     report_dir: str = "reports"
+    tuned_dir: str = "configs/tuned"
 
 
 @dataclass(frozen=True)
@@ -318,6 +356,7 @@ class Config:
     features: FeatureConfig = FeatureConfig()
     models: ModelConfig = field(default_factory=ModelConfig)
     series: SeriesConfig = field(default_factory=SeriesConfig)
+    tuning: TuningConfig = TuningConfig()
     output: OutputConfig = OutputConfig()
 
     def to_dict(self) -> dict[str, Any]:
@@ -332,6 +371,7 @@ _SECTIONS: dict[str, type] = {
     "features": FeatureConfig,
     "models": ModelConfig,
     "series": SeriesConfig,
+    "tuning": TuningConfig,
     "output": OutputConfig,
 }
 
@@ -355,8 +395,8 @@ def config_from_dict(raw: dict[str, Any]) -> Config:
     ----------
     raw : dict
         Mapping with optional keys ``seed``, ``data``, ``target``, ``split``,
-        ``features``, ``models``, ``series`` and ``output``. Missing keys take
-        their default values.
+        ``features``, ``models``, ``series``, ``tuning`` and ``output``.
+        Missing keys take their default values.
 
     Returns
     -------

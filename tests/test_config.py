@@ -178,3 +178,32 @@ def test_series_section_defaults() -> None:
 def test_invalid_series_section(raw: dict, error: type) -> None:
     with pytest.raises(error):
         config_from_dict(raw)
+
+
+def test_tuning_section_defaults() -> None:
+    cfg = load_config()
+    assert cfg.tuning.n_trials == 50
+    assert cfg.tuning.timeout is None
+    assert cfg.tuning.metric == "rmsle"
+    assert cfg.output.tuned_dir == "configs/tuned"
+    budget = config_from_dict({"tuning": {"n_trials": None, "timeout": 600}})
+    assert budget.tuning.n_trials is None
+    assert budget.tuning.timeout == 600
+
+
+@pytest.mark.parametrize(
+    ("raw", "error"),
+    [
+        ({"tuning": {"n_trials": None}}, ValueError),
+        ({"tuning": {"n_trials": 0}}, ValueError),
+        ({"tuning": {"n_trials": 2.5}}, TypeError),
+        ({"tuning": {"timeout": 0}}, ValueError),
+        ({"tuning": {"timeout": "1h"}}, TypeError),
+        ({"tuning": {"metric": "mape"}}, ValueError),
+        ({"tuning": {"n_warmup_steps": -1}}, ValueError),
+        ({"tuning": {"sampler": "random"}}, ValueError),
+    ],
+)
+def test_invalid_tuning_section(raw: dict, error: type) -> None:
+    with pytest.raises(error):
+        config_from_dict(raw)

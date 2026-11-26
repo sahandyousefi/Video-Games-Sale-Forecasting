@@ -13,11 +13,20 @@ the holdout of the latest release years and saves the fitted estimator.
 segment and compares the configured series forecasters from rolling origins.
 The GRU is skipped with a note when PyTorch is not installed.
 
+``vgsales tune`` searches the hyperparameters of one model with Optuna on the
+same expanding-window folds and saves the best configuration to
+``output.tuned_dir``. ``evaluate`` and ``train`` apply the saved parameters
+with ``--tuned``; models without a tuned file keep their configured values.
+Because the folds that select the parameters are the folds that
+``evaluate`` scores, the cross-validation scores of a tuned model are
+optimistically biased. The holdout score of ``train --tuned`` is not.
+
 All commands read the extract from ``data.raw_path`` unless ``--data`` or
 ``--synthetic`` is given, and write JSON and markdown reports to
 ``output.report_dir``. Scores computed on synthetic data describe the
 generator, not the market; they are labelled as such and written only to an
-explicit ``--report-dir``.
+explicit ``--report-dir``. For the same reason, parameters tuned on synthetic
+data are saved only to an explicit ``--output-dir``.
 """
 
 from __future__ import annotations
@@ -26,7 +35,7 @@ import argparse
 import importlib.util
 import logging
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +64,7 @@ from vgsales.evaluation.reports import (
     write_cv_report,
     write_holdout_report,
     write_series_report,
+    write_tuning_report,
 )
 from vgsales.evaluation.rolling import (
     paired_origin_tests,
@@ -65,28 +75,65 @@ from vgsales.features.prerelease import GROUP_COLUMN
 from vgsales.models.forecasting import SeriesForecaster, make_forecaster
 from vgsales.models.registry import is_available, make_model, missing_dependency
 from vgsales.models.target import with_target_transform
+from vgsales.tuning.search import quiet_optuna, tune
+from vgsales.tuning.spaces import get_space
+from vgsales.tuning.store import save_tuned, tuned_overrides, tuned_path
 
 SUMMARY_METRICS = ("rmsle", "mae_log", "r2_log", "rmse", "mae")
 
 
-def build_model(name: str, config: Config) -> BaseEstimator:
-    """Build the unfitted model ``name`` with its configured parameters."""
-    return make_model(name, config)
+def build_model(
+    name: str, config: Config, tuned: Mapping[str, Any] | None = None
+) -> BaseEstimator:
+    """Build the unfitted model ``name``.
+
+    Parameters in ``tuned`` replace the configured ones.
+    """
+    return make_model(name, config, **dict(tuned or {}))
+
+
+def _tuned_params(
+    args: argparse.Namespace, config: Config, names: Iterable[str]
+) -> dict[str, dict[str, Any]]:
+    if not args.tuned:
+        return {}
+    names = list(names)
+    directory = Path(config.output.tuned_dir)
+    tuned = tuned_overrides(names, directory)
+    for name in _searchable(names):
+        if name in tuned:
+            print(f"{name}: tuned parameters from {tuned_path(directory, name)}")
+        else:
+            print(f"{name}: no tuned parameters in {directory}; configured values")
+    return tuned
+
+
+def _searchable(names: Iterable[str]) -> list[str]:
+    searchable = []
+    for name in names:
+        try:
+            get_space(name)
+        except ValueError:
+            continue
+        searchable.append(name)
+    return searchable
 
 
 def _models_to_evaluate(
     args: argparse.Namespace, config: Config
-) -> tuple[dict[str, BaseEstimator], list[str]]:
+) -> tuple[dict[str, BaseEstimator], list[str], dict[str, dict[str, Any]]]:
     if args.models:
-        return {name: build_model(name, config) for name in args.models}, []
-    names = config.models.evaluate
-    skipped = [name for name in names if not is_available(name)]
-    for name in skipped:
-        print(f"skipped {name}: {missing_dependency(name)}")
-    models = {name: build_model(name, config) for name in names if name not in skipped}
-    if not models:
-        raise ValueError("none of the configured models is available")
-    return models, skipped
+        names, skipped = list(args.models), []
+    else:
+        names = [n for n in config.models.evaluate if is_available(n)]
+        skipped = [n for n in config.models.evaluate if n not in names]
+        for name in skipped:
+            print(f"skipped {name}: {missing_dependency(name)}")
+        if not names:
+            raise ValueError("none of the configured models is available")
+    tuned = _tuned_params(args, config, names)
+    models = {name: build_model(name, config, tuned.get(name)) for name in names}
+    return models, skipped, tuned
 
 
 def _dataset(args: argparse.Namespace, config: Config) -> tuple[Dataset, str]:
@@ -128,7 +175,7 @@ def _print_header(dataset: Dataset, source: str) -> None:
 
 
 def _evaluate(args: argparse.Namespace, config: Config) -> int:
-    models, skipped = _models_to_evaluate(args, config)
+    models, skipped, tuned = _models_to_evaluate(args, config)
     dataset, source = _dataset(args, config)
     _print_header(dataset, source)
     X, y = dataset.development()
@@ -156,6 +203,8 @@ def _evaluate(args: argparse.Namespace, config: Config) -> int:
         metadata = _metadata(config, dataset, source)
         if skipped:
             metadata["skipped_models"] = skipped
+        if tuned:
+            metadata["tuned_params"] = tuned
         paths = write_cv_report(results, directory, metadata)
         print("\nwrote " + ", ".join(str(path) for path in paths))
     return 0
@@ -172,7 +221,10 @@ def _holdout_scores(
 
 def _train(args: argparse.Namespace, config: Config) -> int:
     name = args.model or config.models.train
-    model = with_target_transform(build_model(name, config), config.target.transform)
+    tuned = _tuned_params(args, config, [name])
+    model = with_target_transform(
+        build_model(name, config, tuned.get(name)), config.target.transform
+    )
     dataset, source = _dataset(args, config)
     _print_header(dataset, source)
     X_dev, y_dev = dataset.development()
@@ -186,6 +238,8 @@ def _train(args: argparse.Namespace, config: Config) -> int:
     output = Path(args.output or Path(config.output.model_dir) / f"{name}.joblib")
     output.parent.mkdir(parents=True, exist_ok=True)
     metadata = _metadata(config, dataset, source)
+    if name in tuned:
+        metadata["tuned_params"] = tuned[name]
     artifact = {"model": model, "name": name, **metadata, "holdout_scores": scores}
     joblib.dump(artifact, output)
     print(f"\nsaved {output}")
@@ -277,6 +331,74 @@ def _series(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
+def _tuned_dir(args: argparse.Namespace, config: Config, source: str) -> Path | None:
+    if args.output_dir is not None:
+        return args.output_dir
+    if source == SYNTHETIC:
+        return None
+    return Path(config.output.tuned_dir)
+
+
+def _tune(args: argparse.Namespace, config: Config) -> int:
+    name = args.model
+    get_space(name)
+    hint = missing_dependency(name)
+    if hint is not None:
+        raise ImportError(f"model {name!r} is unavailable: {hint}")
+    if not args.verbose:
+        quiet_optuna()
+    settings = config.tuning
+    n_trials = settings.n_trials if args.n_trials is None else args.n_trials
+    timeout = settings.timeout if args.timeout is None else args.timeout
+    dataset, source = _dataset(args, config)
+    _print_header(dataset, source)
+    X, y = dataset.development()
+    cv = ExpandingWindowSplit.from_config(config.split, group_column=GROUP_COLUMN)
+    result = tune(
+        name,
+        config,
+        X,
+        y,
+        cv,
+        n_trials=n_trials,
+        timeout=timeout,
+        metric=settings.metric,
+        n_startup_trials=settings.n_startup_trials,
+        n_warmup_steps=settings.n_warmup_steps,
+    )
+    metric = result.metric
+    print(
+        f"\nsearch of {name}: {result.n_trials()} trials "
+        f"({result.n_trials('complete')} completed, "
+        f"{result.n_trials('pruned')} pruned), sampler seed {result.seed}"
+    )
+    print(f"best fold mean {metric}: {result.best_value:.4f}")
+    print("best parameters:")
+    for key, value in result.best_params.items():
+        shown = f"{value:.6g}" if isinstance(value, float) else value
+        print(f"  {key}: {shown}")
+    columns = ["fold", "val_start", "val_end", "n_train", "n_val"]
+    folds = result.folds.loc[:, columns].copy()
+    folds[metric] = result.best_fold_scores
+    print(f"\nper-fold {metric} of the best configuration:")
+    print(folds.to_string(index=False, float_format="{:.4f}".format))
+
+    directory = _tuned_dir(args, config, source)
+    if directory is not None:
+        provenance = {
+            "source": source,
+            "version": __version__,
+            "dataset": dataset.summary(),
+        }
+        print(f"\nsaved {save_tuned(result, directory, provenance)}")
+    report_dir = _report_dir(args, config, source)
+    if report_dir is not None:
+        metadata = _metadata(config, dataset, source)
+        paths = write_tuning_report(result, report_dir, metadata)
+        print("wrote " + ", ".join(str(path) for path in paths))
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="vgsales",
@@ -308,6 +430,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     common.add_argument("-v", "--verbose", action="store_true", help="log progress")
 
+    tuned_help = "apply tuned parameters from output.tuned_dir where they exist"
     commands = parser.add_subparsers(dest="command", required=True)
     evaluate = commands.add_parser(
         "evaluate",
@@ -315,6 +438,7 @@ def _parser() -> argparse.ArgumentParser:
         help="compare models with expanding-window cross-validation",
     )
     evaluate.add_argument("--models", nargs="+", help="models to compare")
+    evaluate.add_argument("--tuned", action="store_true", help=tuned_help)
     evaluate.set_defaults(handler=_evaluate)
 
     train = commands.add_parser(
@@ -324,6 +448,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     train.add_argument("--model", help="model to fit (default: models.train)")
     train.add_argument("--output", type=Path, help="path of the saved model")
+    train.add_argument("--tuned", action="store_true", help=tuned_help)
     train.set_defaults(handler=_train)
 
     series = commands.add_parser(
@@ -335,6 +460,26 @@ def _parser() -> argparse.ArgumentParser:
         "--models", nargs="+", help="forecasters to compare (default: series.models)"
     )
     series.set_defaults(handler=_series)
+
+    search = commands.add_parser(
+        "tune",
+        parents=[common],
+        help="search hyperparameters with Optuna on the cross-validation folds",
+    )
+    search.add_argument("--model", required=True, help="model to tune")
+    search.add_argument(
+        "--n-trials", type=int, help="number of trials (default: tuning.n_trials)"
+    )
+    search.add_argument(
+        "--timeout", type=float, help="time budget in seconds (default: tuning.timeout)"
+    )
+    search.add_argument(
+        "--output-dir",
+        type=Path,
+        help="directory of the tuned parameters (default: output.tuned_dir; "
+        "synthetic runs save parameters only when this is set)",
+    )
+    search.set_defaults(handler=_tune)
     return parser
 
 

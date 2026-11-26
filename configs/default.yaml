@@ -118,6 +118,19 @@ series:
       patience: 15
       validation_months: 24
 
+tuning:
+  # Optuna search run by `vgsales tune` on the expanding-window folds of the
+  # development years. With n_trials null the search runs until timeout
+  # (seconds). Trials are pruned by the median rule after n_startup_trials
+  # completed trials and never before n_warmup_steps folds are scored.
+  n_trials: 50
+  timeout: null
+  metric: rmsle
+  n_startup_trials: 5
+  n_warmup_steps: 1
+
 output:
   model_dir: models
   report_dir: reports
+  # Tuned parameters, one YAML file per model, applied with --tuned.
+  tuned_dir: configs/tuned

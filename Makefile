@@ -1,6 +1,8 @@
 PYTHON ?= python
 
-.PHONY: install install-all lint format test check evaluate train series clean
+MODEL ?= lightgbm
+
+.PHONY: install install-all lint format test check evaluate train series tune clean
 
 install:
 	$(PYTHON) -m pip install -e ".[dev]"
@@ -29,6 +31,9 @@ train:
 
 series:
 	$(PYTHON) -m vgsales series
+
+tune:
+	$(PYTHON) -m vgsales tune --model $(MODEL)
 
 clean:
 	rm -rf .pytest_cache .ruff_cache .coverage htmlcov build dist src/*.egg-info

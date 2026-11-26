@@ -48,7 +48,7 @@ import pandas as pd
 from numpy.typing import ArrayLike
 
 from vgsales.config import Config
-from vgsales.data.splits import ExpandingWindowSplit, Fold
+from vgsales.data.splits import ExpandingWindowSplit, Fold, describe_folds
 from vgsales.evaluation.cv import check_target, fit_fold, resolve_folds
 from vgsales.evaluation.metrics import (
     GREATER_IS_BETTER,
@@ -78,6 +78,12 @@ def _require_optuna() -> ModuleType:
             "optuna is not installed; install the tuning extras with "
             "pip install 'vgsales[tune]'"
         ) from error
+
+
+def quiet_optuna() -> None:
+    """Limit Optuna's log output to warnings and errors."""
+    optuna = _require_optuna()
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 
 def direction_of(metric: str) -> str:
@@ -192,8 +198,9 @@ class TuningResult:
         Per-fold scores of the best trial, earliest fold first.
     fixed_params : dict
         Parameters held fixed in every trial.
-    n_folds : int
-        Number of folds of a completed trial.
+    folds : pandas.DataFrame
+        Year ranges and sizes of the folds
+        (:func:`vgsales.data.splits.describe_folds`), in scoring order.
     seed : int
         Seed of the sampler.
     trials : pandas.DataFrame
@@ -210,9 +217,14 @@ class TuningResult:
     best_value: float
     best_fold_scores: tuple[float, ...]
     fixed_params: dict[str, Any]
-    n_folds: int
+    folds: pd.DataFrame
     seed: int
     trials: pd.DataFrame
+
+    @property
+    def n_folds(self) -> int:
+        """Number of folds scored by a completed trial."""
+        return len(self.folds)
 
     def n_trials(self, state: str | None = None) -> int:
         """Number of trials, optionally only those in ``state`` (e.g. "pruned")."""
@@ -361,7 +373,7 @@ def tune(
         best_value=float(best.value),
         best_fold_scores=tuple(best.user_attrs[FOLD_SCORES_ATTR]),
         fixed_params=dict(objective.fixed_params),
-        n_folds=len(folds),
+        folds=describe_folds(folds),
         seed=seed,
         trials=trials_table(study),
     )

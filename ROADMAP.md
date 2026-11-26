@@ -11,7 +11,8 @@ release years that the model has not seen.
 ```
 .
 |-- .github/workflows/ci.yml   lint and tests on every push
-|-- configs/                   YAML configuration (data, split, features, models, series)
+|-- configs/                   YAML configuration (data, split, features, models, series, tuning)
+|   `-- tuned/                 tuned parameters written by `vgsales tune`, one file per model
 |-- data/README.md             source, license, schema, acquisition
 |-- docs/                      methodology and model card
 |-- notebooks/                 exploration and walkthrough notebooks
@@ -19,12 +20,12 @@ release years that the model has not seen.
 |-- src/vgsales/
 |   |-- config.py              typed configuration loader
 |   |-- dataset.py             raw extract to features, target and holdout split; monthly series
-|   |-- cli.py                 command-line entry point (train, evaluate, series)
+|   |-- cli.py                 command-line entry point (train, evaluate, series, tune)
 |   |-- data/                  schema, loading, cleaning, splits, profiling, aggregate series, synthetic data
 |   |-- features/              leakage-safe encoders, pre-release features, embedding inputs, sequence windows
 |   |-- models/                target transform, baselines, gradient boosting, registry, series baselines
 |   |   `-- neural/            PyTorch data loading, networks and training
-|   |-- tuning/                Optuna search with time-series CV
+|   |-- tuning/                search spaces, Optuna search with time-series CV, tuned-parameter files
 |   |-- evaluation/            metrics, cross-validation runner, rolling-origin evaluation, reports
 |   |-- explain/               SHAP and permutation importance
 |   |-- monitoring/            drift statistics and reports
@@ -107,7 +108,6 @@ by one or more items below.
 
 ## Phase 6: Hyperparameter optimisation
 
-- [ ] 6.3 Persist best parameters to `configs/tuned/` and add a `vgsales tune` command.
 - [ ] 6.4 Add an Optuna search for the embedding MLP.
 
 ## Phase 7: Prediction intervals
@@ -191,3 +191,4 @@ by one or more items below.
 - [x] 2026-11-25: 5.7c Add a `series` configuration section and a `vgsales series` command that evaluates the GRU against seasonal naive and exponential smoothing baselines from rolling origins and writes a report.
 - [x] 2026-11-25: 6.1 Define Optuna search spaces for XGBoost, LightGBM and CatBoost.
 - [x] 2026-11-26: 6.2 Implement the Optuna objective on the expanding-window cross-validator with median pruning.
+- [x] 2026-11-26: 6.3 Persist best parameters to `configs/tuned/` and add a `vgsales tune` command.
