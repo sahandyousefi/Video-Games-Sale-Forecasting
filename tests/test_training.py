@@ -112,7 +112,9 @@ def test_predict_is_deterministic_and_ignores_the_target() -> None:
     first = predict(model, dataset, batch_size=16)
     assert first.shape == (50,)
     assert first.dtype == np.float64
-    np.testing.assert_array_equal(first, predict(model, dataset))
+    np.testing.assert_array_equal(first, predict(model, dataset, batch_size=16))
+    # Float32 kernels may split the matrix products differently by batch size.
+    np.testing.assert_allclose(predict(model, dataset), first, rtol=1e-6, atol=1e-7)
     inputs_only = TabularDataset(
         TabularArrays(dataset.categorical.numpy(), dataset.numeric.numpy())
     )
