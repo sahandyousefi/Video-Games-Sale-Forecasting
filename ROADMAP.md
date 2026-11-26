@@ -23,7 +23,7 @@ release years that the model has not seen.
 |   |-- cli.py                 command-line entry point (train, evaluate, series, tune)
 |   |-- data/                  schema, loading, cleaning, splits, profiling, aggregate series, synthetic data
 |   |-- features/              leakage-safe encoders, pre-release features, embedding inputs, sequence windows
-|   |-- models/                target transform, baselines, gradient boosting, registry, series baselines
+|   |-- models/                target transform, baselines, gradient boosting, quantile regression, registry, series baselines
 |   |   `-- neural/            PyTorch data loading, networks and training
 |   |-- tuning/                search spaces, Optuna search with time-series CV, tuned-parameter files
 |   |-- evaluation/            point and interval metrics, cross-validation runner, rolling-origin evaluation, reports
@@ -111,7 +111,6 @@ by one or more items below.
 
 ## Phase 7: Prediction intervals
 
-- [ ] 7.1b Add LightGBM quantile regression: one booster per quantile level with temporal early stopping on the pinball loss, and non-crossing quantiles.
 - [ ] 7.1c Evaluate prediction intervals on the expanding-window folds: per-fold and pooled interval metrics, and an `intervals` configuration section.
 - [ ] 7.2 Add split conformal prediction with a calibration set drawn from later release years.
 - [ ] 7.3 Add conformalized quantile regression.
@@ -194,3 +193,4 @@ by one or more items below.
 - [x] 2026-11-26: 6.3 Persist best parameters to `configs/tuned/` and add a `vgsales tune` command.
 - [x] 2026-11-26: 6.4 Add an Optuna search for the embedding MLP.
 - [x] 2026-11-26: 7.1a Add interval metrics: pinball loss, coverage with the shares below and above the interval, mean width and interval score on both scales.
+- [x] 2026-11-26: 7.1b Add LightGBM quantile regression: one booster per quantile level with temporal early stopping on the pinball loss, and non-crossing quantiles.

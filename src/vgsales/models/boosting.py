@@ -372,11 +372,14 @@ class LightGBMRegressor(TemporalBoostingRegressor):
     def _categorical_features(self) -> list[int]:
         return list(range(len((self.config or FeatureConfig()).categorical)))
 
+    def _objective(self) -> dict[str, Any]:
+        """Training objective and early-stopping metric of the booster."""
+        return {"objective": "regression", "metric": "rmse"}
+
     def _make_booster(self, n_estimators: int, early_stopping: bool) -> Any:
         lgb = _require("lightgbm")
         fixed = {
-            "objective": "regression",
-            "metric": "rmse",
+            **self._objective(),
             "n_estimators": n_estimators,
             "learning_rate": self.learning_rate,
             "random_state": self.random_state,
