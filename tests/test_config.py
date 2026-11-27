@@ -213,6 +213,9 @@ def test_interval_section_defaults() -> None:
     cfg = load_config()
     assert cfg.intervals.alpha == pytest.approx(0.1)
     assert cfg.intervals.quantile_params["validation_years"] == 2
+    assert cfg.intervals.methods == ("quantile", "conformal")
+    assert cfg.intervals.point_model == "lightgbm"
+    assert cfg.intervals.calibration_years == 2
     assert config_from_dict({"intervals": {"alpha": 0.2}}).intervals.alpha == 0.2
     custom = config_from_dict({"intervals": {"quantile_params": {"num_leaves": 15}}})
     assert custom.intervals.quantile_params == {"num_leaves": 15}
@@ -229,6 +232,11 @@ def test_interval_section_defaults() -> None:
         ({"intervals": {"quantile_params": {"alpha": 0.3}}}, ValueError),
         ({"intervals": {"quantile_params": {"quantile": 0.3}}}, ValueError),
         ({"intervals": {"level": 0.9}}, ValueError),
+        ({"intervals": {"methods": []}}, ValueError),
+        ({"intervals": {"methods": ["conformal", "conformal"]}}, ValueError),
+        ({"intervals": {"point_model": ""}}, TypeError),
+        ({"intervals": {"calibration_years": 0}}, ValueError),
+        ({"intervals": {"calibration_years": 1.5}}, TypeError),
     ],
 )
 def test_invalid_interval_section(raw: dict, error: type) -> None:

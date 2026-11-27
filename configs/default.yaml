@@ -133,6 +133,10 @@ intervals:
   # Central (1 - alpha) prediction intervals, scored on the expanding-window
   # folds of the development years by coverage, width and interval score.
   alpha: 0.1
+  # quantile: LightGBM quantile regression; conformal: split conformal
+  # intervals around point_model, calibrated on the last calibration_years of
+  # each training window.
+  methods: [quantile, conformal]
   # Keyword arguments of the LightGBM quantile models (gbm extras), one model
   # per quantile level alpha/2, 1/2 and 1 - alpha/2. Rounds are selected by
   # early stopping on the pinball loss over the last validation_years of each
@@ -145,6 +149,9 @@ intervals:
     num_leaves: 31
     min_child_samples: 20
     min_data_per_group: 50
+  # Registered point model with its models.params.
+  point_model: lightgbm
+  calibration_years: 2
 
 output:
   model_dir: models

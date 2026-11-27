@@ -344,18 +344,34 @@ def _default_quantile_params() -> dict[str, Any]:
 class IntervalConfig:
     """Central prediction intervals and their cross-validated evaluation.
 
-    Intervals have nominal coverage ``1 - alpha``. ``quantile_params`` holds
-    the keyword arguments of the LightGBM quantile models of
-    :class:`vgsales.models.quantile.QuantileIntervalRegressor`: the wrapper
-    arguments of the boosting models and booster parameters, as for
-    ``models.params.lightgbm``. The quantile level of each model follows from
-    ``alpha`` and cannot be set here.
+    Intervals have nominal coverage ``1 - alpha``; ``methods`` lists the
+    interval methods compared on the same folds
+    (:mod:`vgsales.models.intervals`), checked when they are built.
+    ``quantile_params`` holds the keyword arguments of the LightGBM quantile
+    models of :class:`vgsales.models.quantile.QuantileIntervalRegressor`:
+    the wrapper arguments of the boosting models and booster parameters, as
+    for ``models.params.lightgbm``. The quantile level of each model follows
+    from ``alpha`` and cannot be set here. Split conformal intervals are
+    centred on ``point_model``, a registered model built with its
+    ``models.params``, and calibrated on the latest ``calibration_years`` of
+    each training window.
     """
 
     alpha: float = 0.1
+    methods: tuple[str, ...] = ("quantile", "conformal")
     quantile_params: dict[str, Any] = field(default_factory=_default_quantile_params)
+    point_model: str = "lightgbm"
+    calibration_years: int = 2
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "methods", tuple(self.methods))
+        if not self.methods:
+            raise ValueError("intervals.methods must name at least one method")
+        if len(set(self.methods)) != len(self.methods):
+            raise ValueError(f"intervals.methods has duplicates: {self.methods}")
+        if not isinstance(self.point_model, str) or not self.point_model:
+            raise TypeError("intervals.point_model must be a model name")
+        _require_int("intervals.calibration_years", self.calibration_years, 1)
         alpha = self.alpha
         if isinstance(alpha, bool) or not isinstance(alpha, int | float):
             raise TypeError(f"intervals.alpha must be a number, got {alpha!r}")
