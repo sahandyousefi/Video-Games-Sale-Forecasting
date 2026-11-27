@@ -353,12 +353,13 @@ class IntervalConfig:
     for ``models.params.lightgbm``. The quantile level of each model follows
     from ``alpha`` and cannot be set here. Split conformal intervals are
     centred on ``point_model``, a registered model built with its
-    ``models.params``, and calibrated on the latest ``calibration_years`` of
-    each training window.
+    ``models.params``. Split conformal and conformalized quantile intervals
+    are calibrated on the latest ``calibration_years`` of each training
+    window.
     """
 
     alpha: float = 0.1
-    methods: tuple[str, ...] = ("quantile", "conformal")
+    methods: tuple[str, ...] = ("quantile", "conformal", "cqr")
     quantile_params: dict[str, Any] = field(default_factory=_default_quantile_params)
     point_model: str = "lightgbm"
     calibration_years: int = 2

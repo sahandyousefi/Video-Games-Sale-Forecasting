@@ -11,6 +11,9 @@ all methods can be cross-validated on identical folds by
   (:mod:`vgsales.models.quantile`).
 - ``conformal``: split conformal intervals around ``intervals.point_model``
   (:mod:`vgsales.models.conformal`).
+- ``cqr``: conformalized quantile regression, the ``quantile`` models fitted
+  on the earlier training years and calibrated on the latest
+  ``intervals.calibration_years``.
 """
 
 from __future__ import annotations
@@ -20,11 +23,14 @@ from typing import Final
 from sklearn.base import BaseEstimator
 
 from vgsales.config import Config
-from vgsales.models.conformal import SplitConformalRegressor
+from vgsales.models.conformal import (
+    ConformalQuantileRegressor,
+    SplitConformalRegressor,
+)
 from vgsales.models.quantile import make_quantile_interval
 from vgsales.models.registry import make_model, missing_dependency
 
-INTERVAL_METHODS: Final = ("quantile", "conformal")
+INTERVAL_METHODS: Final = ("quantile", "conformal", "cqr")
 
 
 def _check_method(method: str) -> None:
@@ -43,9 +49,9 @@ def interval_dependency(method: str, config: Config) -> str | None:
         If ``method`` is unknown or the point model is not registered.
     """
     _check_method(method)
-    if method == "quantile":
-        return missing_dependency("lightgbm")
-    return missing_dependency(config.intervals.point_model)
+    if method == "conformal":
+        return missing_dependency(config.intervals.point_model)
+    return missing_dependency("lightgbm")
 
 
 def make_interval_model(method: str, config: Config) -> BaseEstimator:
@@ -76,11 +82,16 @@ def make_interval_model(method: str, config: Config) -> BaseEstimator:
     if hint is not None:
         raise ImportError(f"interval method {method!r} is unavailable: {hint}")
     settings = config.intervals
+    if method == "conformal":
+        return SplitConformalRegressor(
+            make_model(settings.point_model, config),
+            alpha=settings.alpha,
+            calibration_years=settings.calibration_years,
+        )
+    params = {"random_state": config.seed, **settings.quantile_params}
+    quantile = make_quantile_interval(settings.alpha, config.features, **params)
     if method == "quantile":
-        params = {"random_state": config.seed, **settings.quantile_params}
-        return make_quantile_interval(settings.alpha, config.features, **params)
-    return SplitConformalRegressor(
-        make_model(settings.point_model, config),
-        alpha=settings.alpha,
-        calibration_years=settings.calibration_years,
+        return quantile
+    return ConformalQuantileRegressor(
+        quantile, alpha=settings.alpha, calibration_years=settings.calibration_years
     )

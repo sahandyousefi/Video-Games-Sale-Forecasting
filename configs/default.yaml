@@ -134,9 +134,10 @@ intervals:
   # folds of the development years by coverage, width and interval score.
   alpha: 0.1
   # quantile: LightGBM quantile regression; conformal: split conformal
-  # intervals around point_model, calibrated on the last calibration_years of
-  # each training window.
-  methods: [quantile, conformal]
+  # intervals around point_model; cqr: conformalized quantile regression.
+  # Both conformal methods calibrate on the last calibration_years of each
+  # training window.
+  methods: [quantile, conformal, cqr]
   # Keyword arguments of the LightGBM quantile models (gbm extras), one model
   # per quantile level alpha/2, 1/2 and 1 - alpha/2. Rounds are selected by
   # early stopping on the pinball loss over the last validation_years of each

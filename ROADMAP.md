@@ -111,7 +111,6 @@ by one or more items below.
 
 ## Phase 7: Prediction intervals
 
-- [ ] 7.3 Add conformalized quantile regression.
 - [ ] 7.4 Evaluate coverage by release year and genre, with a reliability figure.
 
 ## Phase 8: Explainability
@@ -194,3 +193,4 @@ by one or more items below.
 - [x] 2026-11-26: 7.1b Add LightGBM quantile regression: one booster per quantile level with temporal early stopping on the pinball loss, and non-crossing quantiles.
 - [x] 2026-11-27: 7.1c Evaluate prediction intervals on the expanding-window folds: per-fold and pooled interval metrics, and an `intervals` configuration section.
 - [x] 2026-11-27: 7.2 Add split conformal prediction with a calibration set drawn from later release years.
+- [x] 2026-11-27: 7.3 Add conformalized quantile regression.

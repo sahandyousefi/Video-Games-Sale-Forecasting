@@ -213,7 +213,7 @@ def test_interval_section_defaults() -> None:
     cfg = load_config()
     assert cfg.intervals.alpha == pytest.approx(0.1)
     assert cfg.intervals.quantile_params["validation_years"] == 2
-    assert cfg.intervals.methods == ("quantile", "conformal")
+    assert cfg.intervals.methods == ("quantile", "conformal", "cqr")
     assert cfg.intervals.point_model == "lightgbm"
     assert cfg.intervals.calibration_years == 2
     assert config_from_dict({"intervals": {"alpha": 0.2}}).intervals.alpha == 0.2

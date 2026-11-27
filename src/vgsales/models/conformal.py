@@ -39,6 +39,27 @@ guarantee does not hold, and coverage on later years is measured
 empirically. The point model is not refitted on :math:`\mathcal{D}_1 \cup
 \mathcal{D}_2`, since that would make the calibration residuals in-sample
 and void the guarantee.
+
+Conformalized quantile regression (Romano et al., 2019) replaces the point
+model by estimates :math:`\hat q_{lo}` and :math:`\hat q_{hi}` of the
+conditional :math:`\alpha / 2` and :math:`1 - \alpha / 2` quantiles, fitted
+on :math:`\mathcal{D}_1`, and scores a calibration row by
+
+.. math::
+
+    E_i = \max\{\hat q_{lo}(x_i) - z_i, \; z_i - \hat q_{hi}(x_i)\},
+
+the signed distance of :math:`z_i` outside the estimated interval (negative
+inside it). With :math:`\hat Q` the conformal quantile of the
+:math:`E_i`, the interval :math:`[\hat q_{lo}(x) - \hat Q,
+\hat q_{hi}(x) + \hat Q]` has the same finite-sample guarantee as the
+split conformal interval, while its width follows the local spread estimated
+by the quantile models instead of being constant on the modelling scale.
+When :math:`\hat Q < 0` the intervals shrink, and a row whose estimated
+interval is narrower than :math:`2 |\hat Q|` would get an empty interval.
+Each bound is therefore extended to the point prediction where it would
+cross it; the result contains the conformalized interval, so the coverage
+guarantee is kept.
 """
 
 from __future__ import annotations
@@ -181,27 +202,17 @@ class SplitConformalRegressor(RegressorMixin, BaseEstimator):
         self.alpha = alpha
         self.calibration_years = calibration_years
 
-    def _fit_point_model(
-        self, X: pd.DataFrame, y: ArrayLike
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def _make_estimator(self) -> BaseEstimator:
         if self.estimator is None:
             raise ValueError("a point estimator is required")
-        _check_alpha(self.alpha)
-        train_idx, cal_idx = calibration_split(X, self.calibration_years)
-        z = np.asarray(y, dtype=np.float64)
-        if z.shape != (len(X),) or not np.isfinite(z).all():
-            raise ValueError(f"y must hold {len(X)} finite values")
-        self.estimator_ = clone(self.estimator).fit(X.iloc[train_idx], z[train_idx])
-        years = X[RELEASE_YEAR].to_numpy()[cal_idx]
-        self.calibration_years_ = (int(years.min()), int(years.max()))
-        self.n_train_ = int(train_idx.size)
-        self.n_calibration_ = int(cal_idx.size)
-        self.n_features_in_ = X.shape[1]
-        self.feature_names_in_ = np.asarray(X.columns, dtype=object)
-        return z, cal_idx
+        return clone(self.estimator)
+
+    def _scores(self, X: pd.DataFrame, z: np.ndarray) -> np.ndarray:
+        """Absolute residuals of the calibration rows."""
+        return np.abs(z - self.estimator_.predict(X))
 
     def fit(self, X: pd.DataFrame, y: ArrayLike) -> SplitConformalRegressor:
-        """Fit the point model and calibrate the interval half-width.
+        """Fit the model on the earlier years and calibrate on the latest ones.
 
         Parameters
         ----------
@@ -215,10 +226,22 @@ class SplitConformalRegressor(RegressorMixin, BaseEstimator):
         SplitConformalRegressor
             The fitted estimator.
         """
-        z, cal_idx = self._fit_point_model(X, y)
-        residuals = z[cal_idx] - self.estimator_.predict(X.iloc[cal_idx])
-        self.scores_ = np.abs(np.asarray(residuals, dtype=np.float64))
+        _check_alpha(self.alpha)
+        estimator = self._make_estimator()
+        train_idx, cal_idx = calibration_split(X, self.calibration_years)
+        z = np.asarray(y, dtype=np.float64)
+        if z.shape != (len(X),) or not np.isfinite(z).all():
+            raise ValueError(f"y must hold {len(X)} finite values")
+        self.estimator_ = estimator.fit(X.iloc[train_idx], z[train_idx])
+        scores = self._scores(X.iloc[cal_idx], z[cal_idx])
+        self.scores_ = np.asarray(scores, dtype=np.float64)
         self.quantile_ = conformal_quantile(self.scores_, self.alpha)
+        years = X[RELEASE_YEAR].to_numpy()[cal_idx]
+        self.calibration_years_ = (int(years.min()), int(years.max()))
+        self.n_train_ = int(train_idx.size)
+        self.n_calibration_ = int(cal_idx.size)
+        self.n_features_in_ = X.shape[1]
+        self.feature_names_in_ = np.asarray(X.columns, dtype=object)
         return self
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
@@ -231,3 +254,57 @@ class SplitConformalRegressor(RegressorMixin, BaseEstimator):
         check_is_fitted(self, "quantile_")
         center = self.predict(X)
         return center - self.quantile_, center + self.quantile_
+
+
+class ConformalQuantileRegressor(SplitConformalRegressor):
+    """Conformalized quantile regression calibrated on the latest years.
+
+    Parameters
+    ----------
+    estimator : estimator
+        Unfitted quantile interval model with ``predict`` (the point
+        prediction) and ``predict_interval`` (the estimated
+        :math:`\\alpha / 2` and :math:`1 - \\alpha / 2` quantiles), for
+        example :class:`vgsales.models.quantile.QuantileIntervalRegressor`.
+        When it has an ``alpha`` parameter, it is set to ``alpha``.
+    alpha : float, default 0.1
+        Nominal miscoverage of the interval.
+    calibration_years : int, default 2
+        Number of latest release years of the training rows that form the
+        calibration set.
+
+    Attributes
+    ----------
+    estimator_ : estimator
+        Quantile model fitted on the proper training set.
+    scores_ : numpy.ndarray
+        Signed distances :math:`E_i` of the calibration rows outside their
+        estimated intervals.
+    quantile_ : float
+        Conformal quantile :math:`\\hat Q` of the scores, negative when the
+        estimated intervals are too wide.
+    calibration_years_, n_train_, n_calibration_
+        As for :class:`SplitConformalRegressor`.
+    """
+
+    def _make_estimator(self) -> BaseEstimator:
+        estimator = super()._make_estimator()
+        if not hasattr(estimator, "predict_interval"):
+            raise TypeError(f"{type(estimator).__name__} does not predict intervals")
+        if "alpha" in estimator.get_params(deep=False):
+            estimator.set_params(alpha=self.alpha)
+        return estimator
+
+    def _scores(self, X: pd.DataFrame, z: np.ndarray) -> np.ndarray:
+        """Signed distances of the calibration rows outside their intervals."""
+        lower, upper = self.estimator_.predict_interval(X)
+        return np.maximum(np.asarray(lower) - z, z - np.asarray(upper))
+
+    def predict_interval(self, X: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+        """Conformalized quantile interval on the modelling scale."""
+        check_is_fitted(self, "quantile_")
+        lower, upper = self.estimator_.predict_interval(X)
+        center = self.predict(X)
+        lower = np.asarray(lower, dtype=np.float64) - self.quantile_
+        upper = np.asarray(upper, dtype=np.float64) + self.quantile_
+        return np.minimum(lower, center), np.maximum(upper, center)
