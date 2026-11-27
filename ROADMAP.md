@@ -26,7 +26,7 @@ release years that the model has not seen.
 |   |-- models/                target transform, baselines, gradient boosting, quantile regression, conformal intervals, registries, series baselines
 |   |   `-- neural/            PyTorch data loading, networks and training
 |   |-- tuning/                search spaces, Optuna search with time-series CV, tuned-parameter files
-|   |-- evaluation/            point and interval metrics, cross-validation runner, rolling-origin evaluation, reports
+|   |-- evaluation/            point and interval metrics, cross-validation runners, coverage diagnostics, rolling-origin evaluation, reports
 |   |-- explain/               SHAP and permutation importance
 |   |-- monitoring/            drift statistics and reports
 |   `-- serving/               model bundle and FastAPI application
@@ -111,7 +111,7 @@ by one or more items below.
 
 ## Phase 7: Prediction intervals
 
-- [ ] 7.4 Evaluate coverage by release year and genre, with a reliability figure.
+- [ ] 7.4b Add a `vgsales intervals` command that compares the configured interval methods on the expanding-window folds and writes the interval report, the coverage tables and the reliability figure.
 
 ## Phase 8: Explainability
 
@@ -194,3 +194,4 @@ by one or more items below.
 - [x] 2026-11-27: 7.1c Evaluate prediction intervals on the expanding-window folds: per-fold and pooled interval metrics, and an `intervals` configuration section.
 - [x] 2026-11-27: 7.2 Add split conformal prediction with a calibration set drawn from later release years.
 - [x] 2026-11-27: 7.3 Add conformalized quantile regression.
+- [x] 2026-11-27: 7.4a Evaluate coverage by release year and genre with Wilson intervals, and a reliability figure of each method's coverage against the nominal level.
