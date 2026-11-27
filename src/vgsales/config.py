@@ -336,6 +336,43 @@ class TuningConfig:
         _require_int("tuning.n_warmup_steps", self.n_warmup_steps, 0)
 
 
+def _default_quantile_params() -> dict[str, Any]:
+    return _boosting_params(num_leaves=31, min_child_samples=20, min_data_per_group=50)
+
+
+@dataclass(frozen=True)
+class IntervalConfig:
+    """Central prediction intervals and their cross-validated evaluation.
+
+    Intervals have nominal coverage ``1 - alpha``. ``quantile_params`` holds
+    the keyword arguments of the LightGBM quantile models of
+    :class:`vgsales.models.quantile.QuantileIntervalRegressor`: the wrapper
+    arguments of the boosting models and booster parameters, as for
+    ``models.params.lightgbm``. The quantile level of each model follows from
+    ``alpha`` and cannot be set here.
+    """
+
+    alpha: float = 0.1
+    quantile_params: dict[str, Any] = field(default_factory=_default_quantile_params)
+
+    def __post_init__(self) -> None:
+        alpha = self.alpha
+        if isinstance(alpha, bool) or not isinstance(alpha, int | float):
+            raise TypeError(f"intervals.alpha must be a number, got {alpha!r}")
+        if not 0.0 < alpha < 1.0:
+            raise ValueError(f"intervals.alpha must lie in (0, 1), got {alpha}")
+        object.__setattr__(self, "alpha", float(alpha))
+        if not isinstance(self.quantile_params, Mapping):
+            raise TypeError("intervals.quantile_params must be a mapping")
+        reserved = sorted({"alpha", "quantile"} & set(self.quantile_params))
+        if reserved:
+            raise ValueError(
+                f"intervals.quantile_params must not set {reserved}; the quantile "
+                "levels follow from intervals.alpha"
+            )
+        object.__setattr__(self, "quantile_params", dict(self.quantile_params))
+
+
 @dataclass(frozen=True)
 class OutputConfig:
     """Directories for fitted models, generated reports and tuned parameters."""
@@ -357,6 +394,7 @@ class Config:
     models: ModelConfig = field(default_factory=ModelConfig)
     series: SeriesConfig = field(default_factory=SeriesConfig)
     tuning: TuningConfig = TuningConfig()
+    intervals: IntervalConfig = field(default_factory=IntervalConfig)
     output: OutputConfig = OutputConfig()
 
     def to_dict(self) -> dict[str, Any]:
@@ -372,6 +410,7 @@ _SECTIONS: dict[str, type] = {
     "models": ModelConfig,
     "series": SeriesConfig,
     "tuning": TuningConfig,
+    "intervals": IntervalConfig,
     "output": OutputConfig,
 }
 
@@ -395,7 +434,8 @@ def config_from_dict(raw: dict[str, Any]) -> Config:
     ----------
     raw : dict
         Mapping with optional keys ``seed``, ``data``, ``target``, ``split``,
-        ``features``, ``models``, ``series``, ``tuning`` and ``output``.
+        ``features``, ``models``, ``series``, ``tuning``, ``intervals`` and
+        ``output``.
         Missing keys take their default values.
 
     Returns

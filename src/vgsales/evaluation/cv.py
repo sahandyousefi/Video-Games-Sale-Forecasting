@@ -158,14 +158,14 @@ def resolve_folds(
     return folds
 
 
-def fit_fold(
+def fit_fold_model(
     estimator: BaseEstimator,
     X: pd.DataFrame,
     target: np.ndarray,
     fold: Fold,
     target_transform: str = "log1p",
-) -> tuple[np.ndarray, float]:
-    """Fit a clone of ``estimator`` on one fold and predict its validation rows.
+) -> tuple[BaseEstimator, float]:
+    """Fit a clone of ``estimator`` on the training rows of one fold.
 
     Parameters
     ----------
@@ -183,15 +183,36 @@ def fit_fold(
 
     Returns
     -------
-    y_pred : numpy.ndarray
-        Predictions for the validation rows on the original scale.
+    model : estimator
+        Fitted estimator that predicts sales on the original scale.
     fit_seconds : float
         Wall-clock time of the fit.
     """
     model = with_target_transform(clone(estimator), target_transform)
     start = time.perf_counter()
     model.fit(X.iloc[fold.train_idx], target[fold.train_idx])
-    elapsed = time.perf_counter() - start
+    return model, time.perf_counter() - start
+
+
+def fit_fold(
+    estimator: BaseEstimator,
+    X: pd.DataFrame,
+    target: np.ndarray,
+    fold: Fold,
+    target_transform: str = "log1p",
+) -> tuple[np.ndarray, float]:
+    """Fit a clone of ``estimator`` on one fold and predict its validation rows.
+
+    Parameters are as for :func:`fit_fold_model`.
+
+    Returns
+    -------
+    y_pred : numpy.ndarray
+        Predictions for the validation rows on the original scale.
+    fit_seconds : float
+        Wall-clock time of the fit.
+    """
+    model, elapsed = fit_fold_model(estimator, X, target, fold, target_transform)
     y_pred = np.asarray(model.predict(X.iloc[fold.val_idx]), dtype=np.float64)
     return y_pred, elapsed
 

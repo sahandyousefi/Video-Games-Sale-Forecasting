@@ -38,7 +38,7 @@ from sklearn.compose import TransformedTargetRegressor
 
 from vgsales.config import FeatureConfig
 from vgsales.data.temporal import RELEASE_YEAR
-from vgsales.models.boosting import LightGBMRegressor
+from vgsales.models.boosting import WRAPPER_PARAMS, LightGBMRegressor
 
 
 def _check_level(value: float, name: str) -> float:
@@ -230,6 +230,33 @@ class QuantileIntervalRegressor(RegressorMixin, BaseEstimator):
         """Lower and upper bounds of the central interval on the modelling scale."""
         quantiles = self.predict_quantiles(X)
         return quantiles[:, 0], quantiles[:, 2]
+
+
+def make_quantile_interval(
+    alpha: float = 0.1, config: FeatureConfig | None = None, **params: Any
+) -> QuantileIntervalRegressor:
+    """Build an unfitted quantile interval model.
+
+    Parameters
+    ----------
+    alpha : float, default 0.1
+        Nominal miscoverage of the central interval.
+    config : FeatureConfig, optional
+        Feature configuration of the preprocessing pipeline.
+    **params
+        Arguments listed in :data:`vgsales.models.boosting.WRAPPER_PARAMS`;
+        every other keyword is passed to the LightGBM boosters, as for
+        :func:`vgsales.models.boosting.make_boosting`.
+
+    Returns
+    -------
+    QuantileIntervalRegressor
+        Unfitted estimator.
+    """
+    wrapper = {key: params.pop(key) for key in WRAPPER_PARAMS if key in params}
+    return QuantileIntervalRegressor(
+        alpha=alpha, config=config, params=params or None, **wrapper
+    )
 
 
 def predict_sales_interval(

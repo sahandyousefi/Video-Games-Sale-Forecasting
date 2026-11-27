@@ -129,6 +129,23 @@ tuning:
   n_startup_trials: 5
   n_warmup_steps: 1
 
+intervals:
+  # Central (1 - alpha) prediction intervals, scored on the expanding-window
+  # folds of the development years by coverage, width and interval score.
+  alpha: 0.1
+  # Keyword arguments of the LightGBM quantile models (gbm extras), one model
+  # per quantile level alpha/2, 1/2 and 1 - alpha/2. Rounds are selected by
+  # early stopping on the pinball loss over the last validation_years of each
+  # training window.
+  quantile_params:
+    n_estimators: 2000
+    learning_rate: 0.05
+    early_stopping_rounds: 100
+    validation_years: 2
+    num_leaves: 31
+    min_child_samples: 20
+    min_data_per_group: 50
+
 output:
   model_dir: models
   report_dir: reports

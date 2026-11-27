@@ -207,3 +207,30 @@ def test_tuning_section_defaults() -> None:
 def test_invalid_tuning_section(raw: dict, error: type) -> None:
     with pytest.raises(error):
         config_from_dict(raw)
+
+
+def test_interval_section_defaults() -> None:
+    cfg = load_config()
+    assert cfg.intervals.alpha == pytest.approx(0.1)
+    assert cfg.intervals.quantile_params["validation_years"] == 2
+    assert config_from_dict({"intervals": {"alpha": 0.2}}).intervals.alpha == 0.2
+    custom = config_from_dict({"intervals": {"quantile_params": {"num_leaves": 15}}})
+    assert custom.intervals.quantile_params == {"num_leaves": 15}
+
+
+@pytest.mark.parametrize(
+    ("raw", "error"),
+    [
+        ({"intervals": {"alpha": 0.0}}, ValueError),
+        ({"intervals": {"alpha": 1}}, ValueError),
+        ({"intervals": {"alpha": "0.1"}}, TypeError),
+        ({"intervals": {"alpha": True}}, TypeError),
+        ({"intervals": {"quantile_params": [1, 2]}}, TypeError),
+        ({"intervals": {"quantile_params": {"alpha": 0.3}}}, ValueError),
+        ({"intervals": {"quantile_params": {"quantile": 0.3}}}, ValueError),
+        ({"intervals": {"level": 0.9}}, ValueError),
+    ],
+)
+def test_invalid_interval_section(raw: dict, error: type) -> None:
+    with pytest.raises(error):
+        config_from_dict(raw)
