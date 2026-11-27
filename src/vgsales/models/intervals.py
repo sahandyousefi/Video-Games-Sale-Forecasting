@@ -31,6 +31,14 @@ from vgsales.models.quantile import make_quantile_interval
 from vgsales.models.registry import make_model, missing_dependency
 
 INTERVAL_METHODS: Final = ("quantile", "conformal", "cqr")
+METHOD_SUMMARIES: Final = {
+    "quantile": "LightGBM quantile regression at the levels alpha/2, 1/2 and "
+    "1 - alpha/2, fitted on all training years",
+    "conformal": "split conformal interval of constant log width around the "
+    "point model, calibrated on the latest training years",
+    "cqr": "conformalized quantile regression, with the quantile models fitted "
+    "on the earlier training years and calibrated on the latest ones",
+}
 
 
 def _check_method(method: str) -> None:

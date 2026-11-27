@@ -11,7 +11,10 @@ against the best model (:mod:`vgsales.evaluation.significance`). The series
 report holds the rolling-origin scores of the monthly forecasters
 (:mod:`vgsales.evaluation.rolling`). The tuning report holds the best
 configuration of a hyperparameter search, its per-fold scores and the trial
-table (:mod:`vgsales.tuning.search`).
+table (:mod:`vgsales.tuning.search`). The interval report holds the
+cross-validated interval scores of each method and their coverage by release
+year and by genre (:mod:`vgsales.evaluation.interval_cv`,
+:mod:`vgsales.evaluation.coverage`).
 """
 
 from __future__ import annotations
@@ -26,10 +29,13 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 
+from vgsales.evaluation.coverage import METHOD_COLUMN
 from vgsales.evaluation.cv import CVResult, comparison_table
+from vgsales.evaluation.interval_cv import IntervalCVResult, interval_comparison_table
 from vgsales.evaluation.metrics import GREATER_IS_BETTER, PRIMARY_METRIC
 from vgsales.evaluation.rolling import RollingResult, paired_origin_tests
 from vgsales.evaluation.significance import paired_comparison
+from vgsales.models.intervals import METHOD_SUMMARIES
 
 if TYPE_CHECKING:
     from vgsales.tuning.search import TuningResult
@@ -38,6 +44,8 @@ CV_JSON = "cv_metrics.json"
 CV_MARKDOWN = "cv_comparison.md"
 SERIES_JSON = "series_metrics.json"
 SERIES_MARKDOWN = "series_comparison.md"
+INTERVALS_JSON = "interval_metrics.json"
+INTERVALS_MARKDOWN = "interval_comparison.md"
 TOP_TRIALS = 10
 SYNTHETIC = "synthetic"
 
@@ -641,4 +649,188 @@ def write_tuning_report(
     md_path = _write(
         directory / f"tuning_{result.name}.md", tuning_markdown(result, metadata)
     )
+    return json_path, md_path
+
+
+_INTERVAL_COLUMNS = (
+    ("coverage", "Coverage"),
+    ("below", "Below"),
+    ("above", "Above"),
+    ("width_log", "Width log"),
+    ("interval_score_log", "Interval score log"),
+    ("interval_score", "Interval score"),
+    ("rmsle", "RMSLE"),
+)
+
+
+def _interval_score_table(results: Mapping[str, IntervalCVResult]) -> pd.DataFrame:
+    table = interval_comparison_table(results)
+    out = pd.DataFrame(index=table.index)
+    mean, std = table["coverage_mean"], table["coverage_std"]
+    out["Coverage mean (sd)"] = [
+        f"{m:.4f} (n/a)" if np.isnan(s) else f"{m:.4f} ({s:.4f})"
+        for m, s in zip(mean, std, strict=True)
+    ]
+    for metric, label in _INTERVAL_COLUMNS:
+        column = f"{metric}_pooled"
+        if column in table.columns:
+            out[f"{label} pooled"] = table[column]
+    return out
+
+
+def coverage_pivot(table: pd.DataFrame, label: str) -> pd.DataFrame:
+    """Coverage of each method by group, with the group size, in wide form.
+
+    Parameters
+    ----------
+    table : pandas.DataFrame
+        Output of :func:`vgsales.evaluation.coverage.coverage_table`.
+    label : str
+        Name of the group column.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Indexed by group, with column ``n`` and one coverage column per
+        method in the order of ``table``.
+    """
+    methods = list(dict.fromkeys(table[METHOD_COLUMN]))
+    wide = table.pivot(index=label, columns=METHOD_COLUMN, values="coverage")
+    sizes = table.drop_duplicates(label).set_index(label)["n"]
+    out = pd.concat([sizes.rename("n"), wide.loc[:, methods]], axis=1)
+    out.index.name = label
+    out.columns.name = None
+    return out
+
+
+def _interval_design(metadata: Mapping[str, Any], methods: list[str]) -> list[str]:
+    settings = metadata.get("config", {}).get("intervals", {})
+    lines = []
+    for method in methods:
+        summary = METHOD_SUMMARIES.get(method, "")
+        if method == "conformal" and settings.get("point_model"):
+            summary += f" (point model: {settings['point_model']})"
+        lines.append(f"- {method}: {summary}" if summary else f"- {method}")
+    if settings.get("calibration_years"):
+        lines.append(
+            f"- Calibration set: the last {settings['calibration_years']} release "
+            "years of each training window, titles with calibration rows purged "
+            "from the rest"
+        )
+    return lines
+
+
+def interval_markdown(
+    results: Mapping[str, IntervalCVResult],
+    by_year: pd.DataFrame,
+    by_genre: pd.DataFrame,
+    metadata: Mapping[str, Any] | None = None,
+) -> str:
+    """Render the interval comparison as a markdown document.
+
+    Parameters
+    ----------
+    results : mapping of str to IntervalCVResult
+        Results keyed by method name, computed on the same folds.
+    by_year, by_genre : pandas.DataFrame
+        Outputs of :func:`vgsales.evaluation.coverage.coverage_table` with
+        ``release_year`` and ``genre`` labels.
+    metadata : mapping, optional
+        Keys ``source``, ``version``, ``created``, ``config``, ``dataset``,
+        ``skipped_models`` and ``figure`` as written by the command line.
+
+    Returns
+    -------
+    str
+        Markdown document.
+    """
+    if not results:
+        raise ValueError("results must not be empty")
+    metadata = metadata or {}
+    first = next(iter(results.values()))
+    nominal = 1.0 - first.alpha
+    sections = [
+        "# Prediction interval comparison",
+        "\n".join(_source_lines(metadata)),
+        "## Methods",
+        f"Central intervals at the nominal level {nominal:.0%} "
+        f"(alpha = {first.alpha:g}).",
+        "\n".join(_interval_design(metadata, list(results))),
+        "## Folds",
+        "Expanding window over release years. Training rows whose title has "
+        "rows in the validation block are purged.",
+        markdown_table(_fold_table(first.per_fold), index=False),
+        "## Scores",
+        "Coverage is the share of observed sales inside their interval, given "
+        "as the mean and sample standard deviation across folds and pooled "
+        "over all out-of-fold rows; Below and Above are the shares under and "
+        "over the interval. Width log is the mean width on the log(1 + sales) "
+        "scale. The interval score (Gneiting and Raftery, 2007) adds to the "
+        "width a penalty of 2/alpha times the distance of each miss; it is "
+        "given on the log(1 + sales) scale and in millions of units, and lower "
+        "is better. RMSLE scores the point prediction of each method. Methods "
+        "are sorted by pooled interval score on the log scale.",
+        markdown_table(_interval_score_table(results)),
+        "## Coverage by release year",
+        "Out-of-fold coverage of each validation year. Rows of one release "
+        "year are scored by the fold that validates it.",
+        markdown_table(coverage_pivot(by_year, "release_year")),
+        "## Coverage by genre",
+        "Out-of-fold coverage pooled over the validation years. Wilson "
+        "intervals of each group are in the JSON report.",
+        markdown_table(coverage_pivot(by_genre, "genre")),
+    ]
+    figure = metadata.get("figure")
+    if figure:
+        sections += [
+            "## Reliability figure",
+            f"![Coverage by release year and genre]({figure})",
+        ]
+    return "\n\n".join(sections) + "\n"
+
+
+def interval_record(
+    results: Mapping[str, IntervalCVResult],
+    by_year: pd.DataFrame,
+    by_genre: pd.DataFrame,
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Collect metadata, interval scores and coverage tables in a JSON-ready dict."""
+    methods = {
+        name: {
+            "alpha": result.alpha,
+            "summary": result.summary().to_dict(orient="index"),
+            "per_fold": result.per_fold.to_dict(orient="records"),
+        }
+        for name, result in results.items()
+    }
+    record = {
+        "metadata": dict(metadata or {}),
+        "methods": methods,
+        "coverage_by_release_year": by_year.to_dict(orient="records"),
+        "coverage_by_genre": by_genre.to_dict(orient="records"),
+    }
+    return to_jsonable(record)
+
+
+def write_interval_report(
+    results: Mapping[str, IntervalCVResult],
+    by_year: pd.DataFrame,
+    by_genre: pd.DataFrame,
+    directory: str | Path,
+    metadata: Mapping[str, Any] | None = None,
+) -> tuple[Path, Path]:
+    """Write ``interval_metrics.json`` and ``interval_comparison.md``.
+
+    Returns
+    -------
+    tuple of Path
+        Paths of the JSON and markdown files.
+    """
+    metadata = {"created": _now(), **(metadata or {})}
+    directory = Path(directory)
+    record = interval_record(results, by_year, by_genre, metadata)
+    json_path = _write(directory / INTERVALS_JSON, _dump(record))
+    markdown = interval_markdown(results, by_year, by_genre, metadata)
+    md_path = _write(directory / INTERVALS_MARKDOWN, markdown)
     return json_path, md_path

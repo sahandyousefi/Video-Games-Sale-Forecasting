@@ -20,7 +20,7 @@ release years that the model has not seen.
 |-- src/vgsales/
 |   |-- config.py              typed configuration loader
 |   |-- dataset.py             raw extract to features, target and holdout split; monthly series
-|   |-- cli.py                 command-line entry point (train, evaluate, series, tune)
+|   |-- cli.py                 command-line entry point (train, evaluate, series, intervals, tune)
 |   |-- data/                  schema, loading, cleaning, splits, profiling, aggregate series, synthetic data
 |   |-- features/              leakage-safe encoders, pre-release features, embedding inputs, sequence windows
 |   |-- models/                target transform, baselines, gradient boosting, quantile regression, conformal intervals, registries, series baselines
@@ -111,7 +111,6 @@ by one or more items below.
 
 ## Phase 7: Prediction intervals
 
-- [ ] 7.4b Add a `vgsales intervals` command that compares the configured interval methods on the expanding-window folds and writes the interval report, the coverage tables and the reliability figure.
 
 ## Phase 8: Explainability
 
@@ -195,3 +194,4 @@ by one or more items below.
 - [x] 2026-11-27: 7.2 Add split conformal prediction with a calibration set drawn from later release years.
 - [x] 2026-11-27: 7.3 Add conformalized quantile regression.
 - [x] 2026-11-27: 7.4a Evaluate coverage by release year and genre with Wilson intervals, and a reliability figure of each method's coverage against the nominal level.
+- [x] 2026-11-27: 7.4b Add a `vgsales intervals` command that compares the configured interval methods on the expanding-window folds and writes the interval report, the coverage tables and the reliability figure.

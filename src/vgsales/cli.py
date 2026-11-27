@@ -13,6 +13,12 @@ the holdout of the latest release years and saves the fitted estimator.
 segment and compares the configured series forecasters from rolling origins.
 The GRU is skipped with a note when PyTorch is not installed.
 
+``vgsales intervals`` compares the configured prediction interval methods
+on the same expanding-window folds, reports their coverage, width and
+interval score, and their coverage by release year and by genre, with a
+reliability figure when matplotlib is installed. Like ``evaluate``, it never
+reads the holdout.
+
 ``vgsales tune`` searches the hyperparameters of one model with Optuna on the
 same expanding-window folds and saves the best configuration to
 ``output.tuned_dir``. ``evaluate`` and ``train`` apply the saved parameters
@@ -49,6 +55,7 @@ from vgsales.config import DEFAULT_CONFIG_PATH, Config, load_config
 from vgsales.data.loading import load_raw
 from vgsales.data.splits import ExpandingWindowSplit
 from vgsales.data.synthetic import SyntheticSpec, make_synthetic
+from vgsales.data.temporal import RELEASE_YEAR
 from vgsales.dataset import (
     Dataset,
     SeriesData,
@@ -56,13 +63,17 @@ from vgsales.dataset import (
     prepare_dataset,
     prepare_series,
 )
+from vgsales.evaluation.coverage import coverage_table, plot_coverage_reliability
 from vgsales.evaluation.cv import compare_models, comparison_table
+from vgsales.evaluation.interval_cv import compare_intervals, interval_comparison_table
 from vgsales.evaluation.metrics import PRIMARY_METRIC, regression_metrics
 from vgsales.evaluation.reports import (
     SYNTHETIC,
+    coverage_pivot,
     paired_tests,
     write_cv_report,
     write_holdout_report,
+    write_interval_report,
     write_series_report,
     write_tuning_report,
 )
@@ -73,6 +84,7 @@ from vgsales.evaluation.rolling import (
 )
 from vgsales.features.prerelease import GROUP_COLUMN
 from vgsales.models.forecasting import SeriesForecaster, make_forecaster
+from vgsales.models.intervals import interval_dependency, make_interval_model
 from vgsales.models.registry import is_available, make_model, missing_dependency
 from vgsales.models.target import with_target_transform
 from vgsales.tuning.search import quiet_optuna, tune
@@ -80,6 +92,16 @@ from vgsales.tuning.spaces import get_space
 from vgsales.tuning.store import save_tuned, tuned_overrides, tuned_path
 
 SUMMARY_METRICS = ("rmsle", "mae_log", "r2_log", "rmse", "mae")
+INTERVAL_SUMMARY = (
+    "coverage",
+    "below",
+    "above",
+    "width_log",
+    "interval_score_log",
+    "interval_score",
+    "rmsle",
+)
+COVERAGE_FIGURE = Path("figures") / "interval_coverage.png"
 
 
 def build_model(
@@ -331,6 +353,74 @@ def _series(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
+def _interval_models(
+    args: argparse.Namespace, config: Config
+) -> tuple[dict[str, BaseEstimator], list[str]]:
+    if args.methods:
+        names, skipped = list(args.methods), []
+    else:
+        methods = config.intervals.methods
+        names = [m for m in methods if interval_dependency(m, config) is None]
+        skipped = [m for m in methods if m not in names]
+        for name in skipped:
+            print(f"skipped {name}: {interval_dependency(name, config)}")
+        if not names:
+            raise ValueError("none of the configured interval methods is available")
+    return {name: make_interval_model(name, config) for name in names}, skipped
+
+
+def _coverage_figure(
+    by_year: pd.DataFrame, by_genre: pd.DataFrame, alpha: float, directory: Path
+) -> Path | None:
+    if importlib.util.find_spec("matplotlib") is None:
+        print('skipped the reliability figure: pip install "vgsales[viz]"')
+        return None
+    path = directory / COVERAGE_FIGURE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    plot_coverage_reliability(by_year, by_genre, alpha, path=path)
+    return path
+
+
+def _intervals(args: argparse.Namespace, config: Config) -> int:
+    models, skipped = _interval_models(args, config)
+    dataset, source = _dataset(args, config)
+    _print_header(dataset, source)
+    X, y = dataset.development()
+    cv = ExpandingWindowSplit.from_config(config.split, group_column=GROUP_COLUMN)
+    alpha = config.intervals.alpha
+    results = compare_intervals(
+        models, X, y, cv, alpha=alpha, target_transform=config.target.transform
+    )
+    folds = next(iter(results.values())).per_fold
+    print("\nfolds:")
+    print(folds.loc[:, "fold":"n_purged"].to_string(index=False))
+    columns = ["coverage_mean", "coverage_std"]
+    columns += [f"{metric}_pooled" for metric in INTERVAL_SUMMARY]
+    table = interval_comparison_table(results).loc[:, columns]
+    print(
+        f"\ncross-validated central {1 - alpha:.0%} intervals "
+        "(sales in millions of units):"
+    )
+    print(table.to_string(float_format="{:.4f}".format))
+    by_year = coverage_table(results, X[RELEASE_YEAR])
+    by_genre = coverage_table(results, X["genre"])
+    print("\ncoverage by release year:")
+    print(coverage_pivot(by_year, RELEASE_YEAR).to_string(float_format="{:.3f}".format))
+    directory = _report_dir(args, config, source)
+    if directory is not None:
+        directory = Path(directory)
+        metadata = _metadata(config, dataset, source)
+        if skipped:
+            metadata["skipped_models"] = skipped
+        figure = _coverage_figure(by_year, by_genre, alpha, directory)
+        if figure is not None:
+            metadata["figure"] = COVERAGE_FIGURE.as_posix()
+        paths = write_interval_report(results, by_year, by_genre, directory, metadata)
+        written = [*paths, figure] if figure is not None else list(paths)
+        print("\nwrote " + ", ".join(str(path) for path in written))
+    return 0
+
+
 def _tuned_dir(args: argparse.Namespace, config: Config, source: str) -> Path | None:
     if args.output_dir is not None:
         return args.output_dir
@@ -460,6 +550,17 @@ def _parser() -> argparse.ArgumentParser:
         "--models", nargs="+", help="forecasters to compare (default: series.models)"
     )
     series.set_defaults(handler=_series)
+
+    intervals = commands.add_parser(
+        "intervals",
+        parents=[common],
+        help="compare prediction interval methods with expanding-window "
+        "cross-validation",
+    )
+    intervals.add_argument(
+        "--methods", nargs="+", help="interval methods (default: intervals.methods)"
+    )
+    intervals.set_defaults(handler=_intervals)
 
     search = commands.add_parser(
         "tune",

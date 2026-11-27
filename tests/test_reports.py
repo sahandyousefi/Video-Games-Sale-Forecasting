@@ -13,24 +13,32 @@ from vgsales.config import load_config
 from vgsales.data.splits import ExpandingWindowSplit, expanding_window_folds
 from vgsales.data.synthetic import SyntheticSpec, make_synthetic
 from vgsales.dataset import prepare_dataset
+from vgsales.evaluation.coverage import coverage_table
 from vgsales.evaluation.cv import CVResult, cross_validate
+from vgsales.evaluation.interval_cv import compare_intervals
 from vgsales.evaluation.reports import (
     CV_JSON,
     CV_MARKDOWN,
+    INTERVALS_JSON,
+    INTERVALS_MARKDOWN,
     SERIES_JSON,
     SERIES_MARKDOWN,
     SYNTHETIC,
+    coverage_pivot,
     cv_markdown,
     cv_record,
+    interval_markdown,
     markdown_table,
     series_markdown,
     to_jsonable,
     write_cv_report,
     write_holdout_report,
+    write_interval_report,
     write_series_report,
 )
 from vgsales.evaluation.rolling import rolling_origin_evaluation, rolling_origins
 from vgsales.features.pipeline import make_preprocessor
+from vgsales.models.conformal import SplitConformalRegressor
 from vgsales.models.forecasting import (
     ExponentialSmoothingForecaster,
     SeasonalNaiveForecaster,
@@ -222,3 +230,78 @@ def test_series_report(tmp_path: Path) -> None:
     assert "3 segments, monthly from 2000-01 to 2005-12" in markdown
     assert "## Paired comparison over origins" in markdown
     assert markdown == series_markdown(result, "seasonal_naive", record["metadata"])
+
+
+@pytest.fixture(scope="module")
+def interval_setup(setup):
+    _, metadata = setup
+    config = load_config()
+    dataset = prepare_dataset(
+        make_synthetic(SyntheticSpec(n_titles=500), seed=4), config
+    )
+    X, y = dataset.development()
+    ridge = make_pipeline(make_preprocessor(scale=True), Ridge())
+    models = {
+        "conformal": SplitConformalRegressor(ridge, alpha=0.2),
+        "wide": SplitConformalRegressor(ridge, alpha=0.2, calibration_years=1),
+    }
+    cv = ExpandingWindowSplit(n_splits=3, min_train_years=6)
+    results = compare_intervals(models, X, y, cv, alpha=0.2)
+    by_year = coverage_table(results, X["release_year"])
+    by_genre = coverage_table(results, X["genre"])
+    return results, by_year, by_genre, metadata
+
+
+def test_coverage_pivot(interval_setup) -> None:
+    results, by_year, _, _ = interval_setup
+    wide = coverage_pivot(by_year, "release_year")
+    assert list(wide.columns) == ["n", "conformal", "wide"]
+    assert wide.index.name == "release_year"
+    assert wide["n"].sum() == len(results["conformal"].predictions)
+    first = by_year[by_year["method"] == "conformal"].set_index("release_year")
+    assert np.allclose(wide["conformal"], first["coverage"])
+
+
+def test_interval_report(interval_setup, tmp_path: Path) -> None:
+    results, by_year, by_genre, metadata = interval_setup
+    metadata = {**metadata, "figure": "figures/interval_coverage.png"}
+    json_path, md_path = write_interval_report(
+        results, by_year, by_genre, tmp_path, metadata
+    )
+    assert json_path == tmp_path / INTERVALS_JSON
+    assert md_path == tmp_path / INTERVALS_MARKDOWN
+    record = json.loads(json_path.read_text(encoding="utf-8"))
+    assert list(record["methods"]) == ["conformal", "wide"]
+    assert record["methods"]["conformal"]["alpha"] == 0.2
+    assert len(record["methods"]["conformal"]["per_fold"]) == 3
+    pooled = record["methods"]["conformal"]["summary"]["pooled"]
+    assert pooled["coverage"] == pytest.approx(
+        results["conformal"].summary().loc["pooled", "coverage"]
+    )
+    rows = record["coverage_by_genre"]
+    assert {"method", "genre", "coverage_low", "coverage_high"} <= set(rows[0])
+    assert "created" in record["metadata"]
+
+    markdown = md_path.read_text(encoding="utf-8")
+    for heading in (
+        "# Prediction interval comparison",
+        "## Methods",
+        "## Folds",
+        "## Scores",
+        "## Coverage by release year",
+        "## Coverage by genre",
+        "## Reliability figure",
+    ):
+        assert heading in markdown
+    assert "nominal level 80% (alpha = 0.2)" in markdown
+    assert "- conformal: split conformal interval" in markdown
+    assert "(point model: lightgbm)" in markdown
+    assert "- wide\n" in markdown
+    assert "The data are synthetic" in markdown
+    assert "![Coverage by release year and genre]" in markdown
+
+    without = interval_markdown(results, by_year, by_genre, {"source": "x.csv"})
+    assert "Reliability figure" not in without
+    assert "synthetic" not in without
+    with pytest.raises(ValueError, match="must not be empty"):
+        interval_markdown({}, by_year, by_genre)

@@ -2,7 +2,7 @@ PYTHON ?= python
 
 MODEL ?= lightgbm
 
-.PHONY: install install-all lint format test check evaluate train series tune clean
+.PHONY: install install-all lint format test check evaluate train series intervals tune clean
 
 install:
 	$(PYTHON) -m pip install -e ".[dev]"
@@ -31,6 +31,9 @@ train:
 
 series:
 	$(PYTHON) -m vgsales series
+
+intervals:
+	$(PYTHON) -m vgsales intervals
 
 tune:
 	$(PYTHON) -m vgsales tune --model $(MODEL)

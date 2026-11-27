@@ -338,3 +338,88 @@ def test_tune_on_synthetic_data_saves_only_to_an_explicit_dir(
 
     assert main(["tune", *common, "--model", "ridge"]) == 1
     assert "no search space for 'ridge'" in capsys.readouterr().err
+
+
+@pytest.fixture
+def interval_config(tmp_path: Path) -> Path:
+    path = tmp_path / "intervals.yaml"
+    path.write_text(
+        "seed: 3\nsplit:\n  cv_folds: 3\n  min_train_years: 5\n"
+        "intervals:\n  methods: [quantile, conformal]\n  point_model: ridge\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_intervals_compares_methods_and_writes_reports(
+    interval_config: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    original = importlib.util.find_spec
+
+    def find_spec(name: str, *args: object) -> object:
+        return None if name == "lightgbm" else original(name, *args)
+
+    monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+    reports = tmp_path / "reports"
+    argv = ["intervals", "--config", str(interval_config), "--synthetic", N_TITLES]
+    assert main([*argv, "--report-dir", str(reports)]) == 0
+    out = capsys.readouterr().out
+    assert "skipped quantile: lightgbm is not installed" in out
+    assert "cross-validated central 90% intervals" in out
+    assert "coverage by release year:" in out
+    folds = out.split("folds:")[1].split("cross-validated")[0]
+    assert len(folds.strip().splitlines()) == 1 + 3
+
+    record = json.loads((reports / "interval_metrics.json").read_text("utf-8"))
+    assert list(record["methods"]) == ["conformal"]
+    assert record["metadata"]["skipped_models"] == ["quantile"]
+    markdown = (reports / "interval_comparison.md").read_text("utf-8")
+    assert "not evaluated" in markdown
+    has_figure = original("matplotlib") is not None
+    assert (reports / "figures" / "interval_coverage.png").is_file() == has_figure
+    assert ("## Reliability figure" in markdown) == has_figure
+
+    assert main([*argv, "--methods", "quantile"]) == 1
+    assert "unavailable" in capsys.readouterr().err
+
+
+def test_intervals_without_matplotlib_skip_the_figure(
+    interval_config: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    original = importlib.util.find_spec
+
+    def find_spec(name: str, *args: object) -> object:
+        return None if name == "matplotlib" else original(name, *args)
+
+    monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+    reports = tmp_path / "reports"
+    argv = ["intervals", "--config", str(interval_config), "--synthetic", N_TITLES]
+    assert main([*argv, "--methods", "conformal", "--report-dir", str(reports)]) == 0
+    assert "skipped the reliability figure" in capsys.readouterr().out
+    assert not (reports / "figures").exists()
+    assert (reports / "interval_comparison.md").is_file()
+
+
+@pytest.mark.skipif(not is_available("lightgbm"), reason="lightgbm is not installed")
+def test_intervals_runs_every_default_method(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fast = "{n_estimators: 100, early_stopping_rounds: 10}"
+    path = tmp_path / "fast.yaml"
+    path.write_text(
+        "seed: 3\nsplit:\n  cv_folds: 2\n  min_train_years: 5\n"
+        f"models:\n  params:\n    lightgbm: {fast}\n"
+        f"intervals:\n  quantile_params: {fast}\n",
+        encoding="utf-8",
+    )
+    argv = ["intervals", "--config", str(path), "--synthetic", N_TITLES]
+    assert main(argv) == 0
+    table = capsys.readouterr().out.split("intervals (sales")[1]
+    for method in ("quantile", "conformal", "cqr"):
+        assert method in table
