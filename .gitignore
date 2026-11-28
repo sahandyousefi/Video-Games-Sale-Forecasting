@@ -22,6 +22,7 @@ data/processed/
 /models/
 mlruns/
 mlartifacts/
+mlflow.db
 optuna*.db
 *.joblib
 *.pkl

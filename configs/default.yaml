@@ -173,6 +173,16 @@ explain:
   # computed by `vgsales explain --holdout`.
   n_repeats: 10
 
+tracking:
+  # MLflow tracking (track extras), off by default. Recent MLflow releases
+  # refuse the file-based store, so runs are kept in a local SQLite database.
+  # A new experiment stores artifacts under artifact_location; null lets
+  # MLflow choose (./mlruns for a local database).
+  enabled: false
+  tracking_uri: sqlite:///mlflow.db
+  experiment: vgsales
+  artifact_location: null
+
 output:
   model_dir: models
   report_dir: reports

@@ -433,6 +433,34 @@ class ExplainConfig:
 
 
 @dataclass(frozen=True)
+class TrackingConfig:
+    """MLflow experiment tracking (:mod:`vgsales.tracking`).
+
+    Tracking is off unless ``enabled`` is true. Runs go to the experiment
+    ``experiment`` in the backend store ``tracking_uri`` (the MLflow default
+    when None); a new experiment stores its artifacts under
+    ``artifact_location``, or where MLflow chooses when None.
+    """
+
+    enabled: bool = False
+    tracking_uri: str | None = "sqlite:///mlflow.db"
+    experiment: str = "vgsales"
+    artifact_location: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.enabled, bool):
+            raise TypeError(
+                f"tracking.enabled must be true or false, got {self.enabled!r}"
+            )
+        if not isinstance(self.experiment, str) or not self.experiment.strip():
+            raise TypeError("tracking.experiment must be a non-empty name")
+        for name in ("tracking_uri", "artifact_location"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise TypeError(f"tracking.{name} must be a non-empty string or null")
+
+
+@dataclass(frozen=True)
 class OutputConfig:
     """Directories for fitted models, generated reports and tuned parameters."""
 
@@ -455,6 +483,7 @@ class Config:
     tuning: TuningConfig = TuningConfig()
     intervals: IntervalConfig = field(default_factory=IntervalConfig)
     explain: ExplainConfig = ExplainConfig()
+    tracking: TrackingConfig = TrackingConfig()
     output: OutputConfig = OutputConfig()
 
     def to_dict(self) -> dict[str, Any]:
@@ -472,6 +501,7 @@ _SECTIONS: dict[str, type] = {
     "tuning": TuningConfig,
     "intervals": IntervalConfig,
     "explain": ExplainConfig,
+    "tracking": TrackingConfig,
     "output": OutputConfig,
 }
 
@@ -496,7 +526,7 @@ def config_from_dict(raw: dict[str, Any]) -> Config:
     raw : dict
         Mapping with optional keys ``seed``, ``data``, ``target``, ``split``,
         ``features``, ``models``, ``series``, ``tuning``, ``intervals``,
-        ``explain`` and ``output``.
+        ``explain``, ``tracking`` and ``output``.
         Missing keys take their default values.
 
     Returns

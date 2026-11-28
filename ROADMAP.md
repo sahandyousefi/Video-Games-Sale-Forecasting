@@ -11,7 +11,7 @@ release years that the model has not seen.
 ```
 .
 |-- .github/workflows/ci.yml   lint and tests on every push
-|-- configs/                   YAML configuration (data, split, features, models, series, tuning, intervals, explain)
+|-- configs/                   YAML configuration (data, split, features, models, series, tuning, intervals, explain, tracking)
 |   `-- tuned/                 tuned parameters written by `vgsales tune`, one file per model
 |-- data/README.md             source, license, schema, acquisition
 |-- docs/                      methodology and model card
@@ -21,6 +21,7 @@ release years that the model has not seen.
 |   |-- config.py              typed configuration loader
 |   |-- dataset.py             raw extract to features, target and holdout split; monthly series
 |   |-- cli.py                 command-line entry point (train, evaluate, series, intervals, explain, tune)
+|   |-- tracking.py            optional MLflow experiment tracking
 |   |-- data/                  schema, loading, cleaning, splits, profiling, aggregate series, synthetic data
 |   |-- features/              leakage-safe encoders, pre-release features, embedding inputs, sequence windows
 |   |-- models/                target transform, baselines, gradient boosting, quantile regression, conformal intervals, registries, series baselines
@@ -117,7 +118,6 @@ by one or more items below.
 
 ## Phase 9: Experiment tracking
 
-- [ ] 9.1 Add MLflow tracking utilities behind an optional-dependency guard.
 - [ ] 9.2 Log cross-validation, tuning and final training runs, and register the selected model.
 
 ## Phase 10: Serving
@@ -198,3 +198,4 @@ by one or more items below.
 - [x] 2026-11-28: 8.2b Add dependence plots of the most important ordered columns and local explanations of selected titles to `vgsales explain` and its report.
 - [x] 2026-11-28: 8.3a Compute permutation importance on held-out rows, with linked columns permuted jointly, and compare its ranking with the grouped SHAP ranking.
 - [x] 2026-11-28: 8.3b Add a `--holdout` option to `vgsales explain` that computes permutation importance on the temporal holdout and reports it next to the SHAP ranking.
+- [x] 2026-11-28: 9.1 Add MLflow tracking utilities behind an optional-dependency guard.
