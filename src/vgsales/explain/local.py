@@ -380,3 +380,58 @@ def plot_shap_dependence(
     ax.grid(axis="y", color="#e6e6e6", lw=0.8)
     _save(fig, path)
     return fig
+
+
+def ordered_columns(explanation: ShapExplanation, n: int) -> list[str]:
+    """Return the ``n`` most important model columns that carry an order.
+
+    Category codes and one-hot indicators of nominal inputs are left out,
+    so encodings such as ``publisher_te`` and numeric columns remain.
+
+    Parameters
+    ----------
+    explanation : ShapExplanation
+        Output of :func:`vgsales.explain.tree_shap.explain_trees`.
+    n : int
+        Number of columns.
+
+    Returns
+    -------
+    list of str
+        Model columns, most important first.
+    """
+    nominal = set(explanation.categorical)
+    columns = [
+        column
+        for column in explanation.importance().index
+        if explanation.sources.get(column, column) not in nominal
+    ]
+    return columns[: max(n, 0)]
+
+
+def spread_rows(predictions: pd.Series, k: int) -> list[Any]:
+    """Return ``k`` rows at evenly spaced ranks of the predictions.
+
+    The first row has the highest prediction and the last the lowest, so
+    three rows give the maximum, the median and the minimum.
+
+    Parameters
+    ----------
+    predictions : pandas.Series
+        Predictions indexed by row.
+    k : int
+        Number of rows; fewer are returned when the series is shorter.
+
+    Returns
+    -------
+    list
+        Index labels, highest prediction first.
+    """
+    if k < 1 or predictions.empty:
+        return []
+    ordered = predictions.sort_values(ascending=False, kind="stable")
+    if k == 1:
+        return [ordered.index[0]]
+    ranks = np.linspace(0, len(ordered) - 1, num=min(k, len(ordered)))
+    positions = np.unique(np.round(ranks).astype(int))
+    return list(ordered.index[positions])

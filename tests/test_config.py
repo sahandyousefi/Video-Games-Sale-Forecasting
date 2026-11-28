@@ -249,9 +249,14 @@ def test_explain_section_defaults() -> None:
     assert explain.models == ("xgboost", "lightgbm", "catboost")
     assert explain.max_rows == 2000
     assert explain.top == 15
+    assert explain.dependence == 4
+    assert explain.titles == ()
+    assert explain.n_local == 3
     custom = config_from_dict({"explain": {"models": ["lightgbm"], "max_rows": None}})
     assert custom.explain.models == ("lightgbm",)
     assert custom.explain.max_rows is None
+    titles = config_from_dict({"explain": {"titles": ["Halo 3", "Wii Sports"]}})
+    assert titles.explain.titles == ("Halo 3", "Wii Sports")
 
 
 @pytest.mark.parametrize(
@@ -264,6 +269,10 @@ def test_explain_section_defaults() -> None:
         ({"explain": {"top": 0}}, ValueError),
         ({"explain": {"top": True}}, TypeError),
         ({"explain": {"rows": "holdout"}}, ValueError),
+        ({"explain": {"dependence": -1}}, ValueError),
+        ({"explain": {"n_local": 1.0}}, TypeError),
+        ({"explain": {"titles": ["Halo", " "]}}, TypeError),
+        ({"explain": {"titles": [3]}}, TypeError),
     ],
 )
 def test_invalid_explain_section(raw: dict, error: type) -> None:

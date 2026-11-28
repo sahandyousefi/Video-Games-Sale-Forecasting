@@ -398,15 +398,23 @@ class ExplainConfig:
     years with its ``models.params`` and explains at most ``max_rows``
     development rows (all of them when None). Figures show the ``top`` most
     important columns. The models are checked to be boosting models when
-    the command runs.
+    the command runs. For the first available model, the command also plots
+    the dependence of the ``dependence`` most important ordered columns and
+    decomposes the predictions of the development rows of ``titles``, or,
+    when no titles are given, of ``n_local`` rows at evenly spaced ranks of
+    the predicted sales.
     """
 
     models: tuple[str, ...] = ("xgboost", "lightgbm", "catboost")
     max_rows: int | None = 2000
     top: int = 15
+    dependence: int = 4
+    titles: tuple[str, ...] = ()
+    n_local: int = 3
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "models", tuple(self.models))
+        object.__setattr__(self, "titles", tuple(self.titles))
         if not self.models:
             raise ValueError("explain.models must name at least one model")
         if len(set(self.models)) != len(self.models):
@@ -414,6 +422,11 @@ class ExplainConfig:
         if self.max_rows is not None:
             _require_int("explain.max_rows", self.max_rows, 1)
         _require_int("explain.top", self.top, 1)
+        _require_int("explain.dependence", self.dependence, 0)
+        _require_int("explain.n_local", self.n_local, 0)
+        for title in self.titles:
+            if not isinstance(title, str) or not title.strip():
+                raise TypeError(f"explain.titles must hold titles, got {title!r}")
 
 
 @dataclass(frozen=True)

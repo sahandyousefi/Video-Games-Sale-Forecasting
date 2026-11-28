@@ -162,6 +162,13 @@ explain:
   models: [xgboost, lightgbm, catboost]
   max_rows: 2000
   top: 15
+  # For the first available model: dependence plots of the most important
+  # ordered columns, and local explanations of the development rows of the
+  # listed titles or, when the list is empty, of n_local rows spread over the
+  # range of predicted sales.
+  dependence: 4
+  titles: []
+  n_local: 3
 
 output:
   model_dir: models

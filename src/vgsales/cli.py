@@ -20,8 +20,10 @@ reliability figure when matplotlib is installed. Like ``evaluate``, it never
 reads the holdout.
 
 ``vgsales explain`` fits the configured boosting models on all development
-years and writes their TreeSHAP importance by input column, with importance
-and summary figures when matplotlib is installed. The rows explained are
+years and writes their TreeSHAP importance by input column. For the first
+model it adds local explanations of single titles and, when matplotlib is
+installed, dependence plots of the most important ordered columns, next to
+the importance and summary figures of every model. The rows explained are
 development rows; the holdout is not read.
 
 ``vgsales tune`` searches the hyperparameters of one model with Optuna on the
@@ -45,6 +47,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import logging
+import re
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
@@ -56,7 +59,8 @@ import pandas as pd
 from sklearn.base import BaseEstimator
 
 from vgsales import __version__
-from vgsales.config import DEFAULT_CONFIG_PATH, Config, load_config
+from vgsales.config import DEFAULT_CONFIG_PATH, Config, ExplainConfig, load_config
+from vgsales.data.grouping import title_key
 from vgsales.data.loading import load_raw
 from vgsales.data.splits import ExpandingWindowSplit
 from vgsales.data.synthetic import SyntheticSpec, make_synthetic
@@ -87,6 +91,14 @@ from vgsales.evaluation.rolling import (
     paired_origin_tests,
     rolling_origin_evaluation,
     rolling_origins,
+)
+from vgsales.explain.local import (
+    LocalExplanation,
+    explain_row,
+    ordered_columns,
+    plot_local_explanation,
+    plot_shap_dependence,
+    spread_rows,
 )
 from vgsales.explain.tree_shap import (
     ShapExplanation,
@@ -121,6 +133,7 @@ INTERVAL_SUMMARY = (
 )
 COVERAGE_FIGURE = Path("figures") / "interval_coverage.png"
 FIGURE_DIR = Path("figures")
+LOCAL_TERMS = 8
 
 
 def build_model(
@@ -462,9 +475,52 @@ def _explain_models(
     return available, skipped
 
 
+def _local_rows(
+    X: pd.DataFrame, explanation: ShapExplanation, settings: ExplainConfig
+) -> tuple[list[Any], str]:
+    if settings.titles:
+        keys = title_key(pd.Series(list(settings.titles), dtype=object))
+        present = set(X[GROUP_COLUMN].dropna())
+        for title, key in zip(settings.titles, keys, strict=True):
+            if key not in present:
+                print(f"title {title!r} is not among the development rows")
+        rows = list(X.index[X[GROUP_COLUMN].isin(set(keys.dropna()))])
+        return rows, "the development rows of the titles in explain.titles"
+    predictions = pd.Series(explanation.predictions(), index=explanation.values.index)
+    rows = spread_rows(predictions, settings.n_local)
+    return rows, (
+        f"{len(rows)} explained development rows at evenly spaced ranks of the "
+        "prediction, from highest to lowest"
+    )
+
+
+def _local_explanations(
+    model: BaseEstimator,
+    explanation: ShapExplanation,
+    X: pd.DataFrame,
+    config: Config,
+) -> tuple[list[LocalExplanation], str]:
+    rows, selection = _local_rows(X, explanation, config.explain)
+    if not rows:
+        return [], selection
+    values = explain_trees(model, X.loc[rows], max_rows=None)
+    local = [
+        explain_row(values, X, row, top=LOCAL_TERMS, transform=config.target.transform)
+        for row in rows
+    ]
+    return local, selection
+
+
+def _slug(name: str) -> str:
+    return re.sub(r"[^\w-]+", "_", name).strip("_")
+
+
 def _shap_figures(
-    explanations: Mapping[str, ShapExplanation], top: int, directory: Path
-) -> dict[str, dict[str, str]]:
+    explanations: Mapping[str, ShapExplanation],
+    local: Sequence[LocalExplanation],
+    settings: ExplainConfig,
+    directory: Path,
+) -> dict[str, Any]:
     if importlib.util.find_spec("matplotlib") is None:
         print('skipped the SHAP figures: pip install "vgsales[explain]"')
         return {}
@@ -475,13 +531,13 @@ def _shap_figures(
         summary = FIGURE_DIR / f"shap_summary_{name}.png"
         plot_shap_importance(
             explanation,
-            top=top,
+            top=settings.top,
             title=f"Global SHAP importance: {name}",
             path=directory / importance,
         )
         plot_shap_summary(
             explanation,
-            top=top,
+            top=settings.top,
             title=f"SHAP values by row: {name}",
             path=directory / summary,
         )
@@ -489,7 +545,47 @@ def _shap_figures(
             "importance": importance.as_posix(),
             "summary": summary.as_posix(),
         }
-    return figures
+    out: dict[str, Any] = {"figures": figures}
+    primary, explanation = next(iter(explanations.items()))
+    dependence = {}
+    for column in ordered_columns(explanation, settings.dependence):
+        path = FIGURE_DIR / f"shap_dependence_{primary}_{_slug(column)}.png"
+        colour = RELEASE_YEAR
+        if column == RELEASE_YEAR or RELEASE_YEAR not in explanation.data.columns:
+            colour = None
+        plot_shap_dependence(
+            explanation,
+            column,
+            color_by=colour,
+            random_state=0,
+            title=f"Dependence on {column}: {primary}",
+            path=directory / path,
+        )
+        dependence[column] = path.as_posix()
+    if dependence:
+        out["dependence_figures"] = dependence
+    local_paths = []
+    for position, item in enumerate(local, start=1):
+        path = FIGURE_DIR / f"shap_local_{primary}_{position}.png"
+        plot_local_explanation(item, path=directory / path)
+        local_paths.append(path.as_posix())
+    if local_paths:
+        out["local_figures"] = local_paths
+    return out
+
+
+def _figure_paths(figures: Mapping[str, Any]) -> list[str]:
+    paths = [p for item in figures.get("figures", {}).values() for p in item.values()]
+    paths += list(figures.get("dependence_figures", {}).values())
+    paths += list(figures.get("local_figures", []))
+    return paths
+
+
+def _print_local(local: Sequence[LocalExplanation], name: str, selection: str) -> None:
+    print(f"\nlocal explanations of {name} for {selection}:")
+    for item in local:
+        print(f"\n{item.label}: predicted {item.predicted_sales():.4f} million units")
+        print(item.contributions.to_string(float_format="{:+.4f}".format))
 
 
 def _explain(args: argparse.Namespace, config: Config) -> int:
@@ -503,21 +599,27 @@ def _explain(args: argparse.Namespace, config: Config) -> int:
     _print_header(dataset, source)
     X, y = dataset.development()
     settings = config.explain
-    explanations = {}
+    models, explanations = {}, {}
     for name in names:
         model = with_target_transform(
             build_model(name, config, tuned.get(name)), config.target.transform
         )
-        model.fit(X, y)
+        models[name] = model.fit(X, y)
         explanations[name] = explain_trees(
             model, X, max_rows=settings.max_rows, random_state=config.seed
         )
-    n_rows = len(next(iter(explanations.values())).values)
+    primary = names[0]
+    local, selection = _local_explanations(
+        models[primary], explanations[primary], X, config
+    )
+    n_rows = len(explanations[primary].values)
     print(
         f"\nmean |SHAP value| by input column on {n_rows} of {len(X)} development "
         "rows (log(1 + sales) scale):"
     )
     print(importance_table(explanations).to_string(float_format="{:.4f}".format))
+    if local:
+        _print_local(local, primary, selection)
     directory = _report_dir(args, config, source)
     if directory is not None:
         directory = Path(directory)
@@ -531,13 +633,16 @@ def _explain(args: argparse.Namespace, config: Config) -> int:
             metadata["skipped_models"] = skipped
         if tuned:
             metadata["tuned_params"] = tuned
-        figures = _shap_figures(explanations, settings.top, directory)
-        if figures:
-            metadata["figures"] = figures
-        paths = write_shap_report(explanations, directory, metadata, top=settings.top)
-        written = [*paths]
-        written += [directory / p for item in figures.values() for p in item.values()]
-        print("\nwrote " + ", ".join(str(path) for path in written))
+        metadata["local_model"] = primary
+        metadata["local_selection"] = selection
+        figures = _shap_figures(explanations, local, settings, directory)
+        metadata.update(figures)
+        paths = write_shap_report(
+            explanations, directory, metadata, top=settings.top, local=local
+        )
+        written = [str(path) for path in paths]
+        written += [str(directory / path) for path in _figure_paths(figures)]
+        print("\nwrote " + ", ".join(written))
     return 0
 
 

@@ -41,6 +41,7 @@ from vgsales.evaluation.reports import (
     write_shap_report,
 )
 from vgsales.evaluation.rolling import rolling_origin_evaluation, rolling_origins
+from vgsales.explain.local import LocalExplanation
 from vgsales.explain.tree_shap import ShapExplanation
 from vgsales.features.pipeline import make_preprocessor
 from vgsales.models.conformal import SplitConformalRegressor
@@ -391,3 +392,49 @@ def test_shap_report(tmp_path: Path) -> None:
     assert "tuned" not in plain
     with pytest.raises(ValueError, match="must not be empty"):
         shap_markdown({})
+
+
+def test_shap_report_with_local_explanations(tmp_path: Path) -> None:
+    explanations = {"lightgbm": shap_explanation(1.0)}
+    contributions = pd.DataFrame(
+        {"value": ["PS2", "8.5", ""], "shap": [0.4, -0.1, 0.05]},
+        index=pd.Index(["console", "critic_score", "2 other columns"], name="feature"),
+    )
+    local = [LocalExplanation("game a (PS2, 2004)", 0.2, contributions)]
+    metadata = {
+        "local_model": "lightgbm",
+        "local_selection": "the development rows of the titles in explain.titles",
+        "local_figures": ["figures/shap_local_lightgbm_1.png"],
+        "dependence_figures": {
+            "critic_score": "figures/shap_dependence_lightgbm_critic_score.png"
+        },
+    }
+    json_path, md_path = write_shap_report(
+        explanations, tmp_path, metadata, local=local
+    )
+    record = json.loads(json_path.read_text(encoding="utf-8"))
+    (item,) = record["local_explanations"]
+    assert item["label"] == "game a (PS2, 2004)"
+    assert item["prediction"] == pytest.approx(0.55)
+    assert item["predicted_sales"] == pytest.approx(np.expm1(0.55))
+    assert item["contributions"][0] == {
+        "feature": "console",
+        "value": "PS2",
+        "shap": 0.4,
+    }
+
+    markdown = md_path.read_text(encoding="utf-8")
+    assert "## Dependence plots" in markdown
+    assert "most important ordered model columns of lightgbm" in markdown
+    assert "![Dependence on critic_score]" in markdown
+    assert "## Local explanations" in markdown
+    assert "prediction for the development rows of the titles" in markdown
+    assert "### game a (PS2, 2004)" in markdown
+    assert "Predicted sales 0.7333 million units" in markdown
+    assert "| feature | input value | shap |" in markdown
+    assert "| console | PS2 | 0.4000 |" in markdown
+    assert "![Local explanation of game a (PS2, 2004)]" in markdown
+
+    plain = shap_markdown(explanations, {}, local=())
+    assert "## Local explanations" not in plain
+    assert "## Dependence plots" not in plain

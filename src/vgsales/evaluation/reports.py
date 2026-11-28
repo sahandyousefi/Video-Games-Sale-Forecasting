@@ -16,14 +16,15 @@ cross-validated interval scores of each method and their coverage by release
 year and by genre (:mod:`vgsales.evaluation.interval_cv`,
 :mod:`vgsales.evaluation.coverage`). The SHAP report holds the global TreeSHAP
 importance of the boosting models fitted on the development years
-(:mod:`vgsales.explain.tree_shap`).
+(:mod:`vgsales.explain.tree_shap`), with dependence plots and local
+explanations of single rows (:mod:`vgsales.explain.local`).
 """
 
 from __future__ import annotations
 
 import json
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -41,6 +42,7 @@ from vgsales.explain.tree_shap import importance_table
 from vgsales.models.intervals import METHOD_SUMMARIES
 
 if TYPE_CHECKING:
+    from vgsales.explain.local import LocalExplanation
     from vgsales.explain.tree_shap import ShapExplanation
     from vgsales.tuning.search import TuningResult
 
@@ -844,9 +846,21 @@ def write_interval_report(
     return json_path, md_path
 
 
+def _local_record(local: LocalExplanation) -> dict[str, Any]:
+    contributions = local.contributions.reset_index()
+    return {
+        "label": local.label,
+        "base_value": local.base_value,
+        "prediction": local.prediction,
+        "predicted_sales": local.predicted_sales(),
+        "contributions": contributions.to_dict(orient="records"),
+    }
+
+
 def shap_record(
     explanations: Mapping[str, ShapExplanation],
     metadata: Mapping[str, Any] | None = None,
+    local: Sequence[LocalExplanation] = (),
 ) -> dict[str, Any]:
     """Collect the SHAP importance of each model in a JSON-ready dict.
 
@@ -856,13 +870,16 @@ def shap_record(
         Explanations keyed by model name.
     metadata : mapping, optional
         Provenance as written by the command line.
+    local : sequence of LocalExplanation, optional
+        Decompositions of single rows.
 
     Returns
     -------
     dict
-        Keys ``metadata`` and ``models``; each model holds the number of
-        explained rows, the base value and the importance by input column and
-        by model column, on the modelling scale.
+        Keys ``metadata``, ``models`` and, when ``local`` is given,
+        ``local_explanations``. Each model holds the number of explained
+        rows, the base value and the importance by input column and by model
+        column, on the modelling scale.
     """
     models = {
         name: {
@@ -873,7 +890,10 @@ def shap_record(
         }
         for name, item in explanations.items()
     }
-    return to_jsonable({"metadata": dict(metadata or {}), "models": models})
+    record: dict[str, Any] = {"metadata": dict(metadata or {}), "models": models}
+    if local:
+        record["local_explanations"] = [_local_record(item) for item in local]
+    return to_jsonable(record)
 
 
 def _top_columns(explanations: Mapping[str, ShapExplanation], top: int) -> pd.DataFrame:
@@ -886,10 +906,61 @@ def _top_columns(explanations: Mapping[str, ShapExplanation], top: int) -> pd.Da
     return table
 
 
+def _dependence_section(metadata: Mapping[str, Any]) -> list[str]:
+    paths = metadata.get("dependence_figures") or {}
+    if not paths:
+        return []
+    model = metadata.get("local_model", "the first model")
+    images = [f"![Dependence on {column}]({path})" for column, path in paths.items()]
+    return [
+        "## Dependence plots",
+        f"SHAP value of the most important ordered model columns of {model} "
+        "against the value of the column, on the explained rows. Points are "
+        "coloured by the rank of the release year where it is not the plotted "
+        "column. Vertical spread at a given value reflects interactions with "
+        "other columns.",
+        "\n\n".join(images),
+    ]
+
+
+def _local_section(
+    local: Sequence[LocalExplanation], metadata: Mapping[str, Any]
+) -> list[str]:
+    if not local:
+        return []
+    model = metadata.get("local_model", "the first model")
+    selection = metadata.get("local_selection", "selected development rows")
+    figures = metadata.get("local_figures") or []
+    sections = [
+        "## Local explanations",
+        f"Additive decomposition of the {model} prediction for {selection}. "
+        "Each term is the sum of the SHAP values of the model columns of one "
+        "input column on the log(1 + sales) scale; the remaining columns are "
+        "summed in the last term. The terms add up to the prediction minus "
+        "the expected prediction, and a term t multiplies the forecast of "
+        "1 + sales by exp(t).",
+    ]
+    for position, item in enumerate(local):
+        table = item.contributions.rename(columns={"value": "input value"})
+        sections += [
+            f"### {item.label}",
+            f"Predicted sales {item.predicted_sales():.4f} million units; "
+            f"prediction {item.prediction:.4f} and expected prediction "
+            f"{item.base_value:.4f} on the log(1 + sales) scale.",
+            markdown_table(table),
+        ]
+        if position < len(figures):
+            sections.append(
+                f"![Local explanation of {item.label}]({figures[position]})"
+            )
+    return sections
+
+
 def shap_markdown(
     explanations: Mapping[str, ShapExplanation],
     metadata: Mapping[str, Any] | None = None,
     top: int = 15,
+    local: Sequence[LocalExplanation] = (),
 ) -> str:
     """Render the SHAP importance of several models as a markdown document.
 
@@ -899,10 +970,13 @@ def shap_markdown(
         Explanations keyed by model name, computed on the same rows.
     metadata : mapping, optional
         Keys ``source``, ``version``, ``created``, ``config``, ``dataset``,
-        ``skipped_models``, ``explained_rows`` and ``figures`` as written by
-        the command line.
+        ``skipped_models``, ``explained_rows``, ``figures``,
+        ``dependence_figures``, ``local_model``, ``local_selection`` and
+        ``local_figures`` as written by the command line.
     top : int, default 15
         Number of model columns listed per model.
+    local : sequence of LocalExplanation, optional
+        Decompositions of single rows, listed in order.
 
     Returns
     -------
@@ -953,6 +1027,8 @@ def shap_markdown(
                 f"![Global SHAP importance of {name}]({paths['importance']})\n\n"
                 f"![SHAP values of {name} by row]({paths['summary']})"
             )
+    sections += _dependence_section(metadata)
+    sections += _local_section(local, metadata)
     return "\n\n".join(sections) + "\n"
 
 
@@ -961,6 +1037,7 @@ def write_shap_report(
     directory: str | Path,
     metadata: Mapping[str, Any] | None = None,
     top: int = 15,
+    local: Sequence[LocalExplanation] = (),
 ) -> tuple[Path, Path]:
     """Write ``shap_importance.json`` and ``shap_importance.md`` to ``directory``.
 
@@ -971,8 +1048,8 @@ def write_shap_report(
     """
     metadata = {"created": _now(), **(metadata or {})}
     directory = Path(directory)
-    record = shap_record(explanations, metadata)
+    record = shap_record(explanations, metadata, local)
     json_path = _write(directory / SHAP_JSON, _dump(record))
-    markdown = shap_markdown(explanations, metadata, top=top)
+    markdown = shap_markdown(explanations, metadata, top=top, local=local)
     md_path = _write(directory / SHAP_MARKDOWN, markdown)
     return json_path, md_path

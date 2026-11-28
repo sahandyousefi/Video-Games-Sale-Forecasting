@@ -431,7 +431,8 @@ def explain_config(tmp_path: Path) -> Path:
     path.write_text(
         "seed: 3\nmodels:\n  params:\n"
         "    lightgbm: {n_estimators: 60, early_stopping_rounds: 10}\n"
-        "explain:\n  models: [lightgbm, catboost]\n  max_rows: 200\n  top: 5\n",
+        "explain:\n  models: [lightgbm, catboost]\n  max_rows: 200\n  top: 5\n"
+        "  dependence: 2\n  n_local: 2\n",
         encoding="utf-8",
     )
     return path
@@ -458,6 +459,9 @@ def test_explain_writes_shap_importance_and_figures(
     assert "skipped catboost: catboost is not installed" in out
     assert "mean |SHAP value| by input column on 200 of" in out
     assert "publisher" in out.split("scale):")[1]
+    local_out = out.split("local explanations of lightgbm for 2 explained")[1]
+    assert local_out.count("million units") == 2
+    assert "other columns" in local_out
 
     record = json.loads((reports / "shap_importance.json").read_text("utf-8"))
     assert list(record["models"]) == ["lightgbm"]
@@ -466,11 +470,25 @@ def test_explain_writes_shap_importance_and_figures(
     assert record["metadata"]["explained_rows"]["seed"] == 3
     markdown = (reports / "shap_importance.md").read_text("utf-8")
     assert "random subsample of 200" in markdown
+    assert markdown.count("### ") == 2
+    assert len(record["local_explanations"]) == 2
+    first, second = record["local_explanations"]
+    assert first["predicted_sales"] >= second["predicted_sales"]
+    terms = sum(term["shap"] for term in first["contributions"])
+    assert first["base_value"] + terms == pytest.approx(first["prediction"])
+    assert record["metadata"]["local_model"] == "lightgbm"
     has_figures = original("matplotlib") is not None
     for kind in ("importance", "summary"):
         figure = reports / "figures" / f"shap_{kind}_lightgbm.png"
         assert figure.is_file() == has_figures
     assert ("## Figures" in markdown) == has_figures
+    assert ("## Dependence plots" in markdown) == has_figures
+    dependence = sorted((reports / "figures").glob("shap_dependence_lightgbm_*.png"))
+    local_figures = sorted((reports / "figures").glob("shap_local_lightgbm_*.png"))
+    assert len(dependence) == (2 if has_figures else 0)
+    assert len(local_figures) == (2 if has_figures else 0)
+    if has_figures:
+        assert "console" not in record["metadata"]["dependence_figures"]
 
     assert main([*argv, "--models", "catboost"]) == 1
     assert "unavailable" in capsys.readouterr().err
@@ -511,3 +529,34 @@ def test_explain_needs_shap_and_skips_figures_without_matplotlib(
     assert "skipped the SHAP figures" in capsys.readouterr().out
     assert not (reports / "figures").exists()
     assert "## Figures" not in (reports / "shap_importance.md").read_text("utf-8")
+
+
+@pytest.mark.skipif(not is_available("lightgbm"), reason="lightgbm is not installed")
+def test_explain_decomposes_the_listed_titles(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pytest.importorskip("shap")
+    config = load_config()
+    raw = make_synthetic(SyntheticSpec(n_titles=int(N_TITLES)), seed=3)
+    X, _ = prepare_dataset(raw, config).development()
+    key = X["title_key"].iloc[0]
+    n_rows = int((X["title_key"] == key).sum())
+    path = tmp_path / "titles.yaml"
+    path.write_text(
+        "seed: 3\nmodels:\n  params:\n"
+        "    lightgbm: {n_estimators: 40, early_stopping_rounds: 10}\n"
+        "explain:\n  models: [lightgbm]\n  max_rows: 50\n  dependence: 0\n"
+        f"  titles: ['{key.upper()}', 'No Such Game']\n",
+        encoding="utf-8",
+    )
+    reports = tmp_path / "reports"
+    argv = ["explain", "--config", str(path), "--synthetic", N_TITLES]
+    assert main([*argv, "--report-dir", str(reports)]) == 0
+    out = capsys.readouterr().out
+    assert "title 'No Such Game' is not among the development rows" in out
+    assert "for the development rows of the titles in explain.titles" in out
+    record = json.loads((reports / "shap_importance.json").read_text("utf-8"))
+    labels = [item["label"] for item in record["local_explanations"]]
+    assert len(labels) == n_rows
+    assert all(label.startswith(key) for label in labels)
+    assert "dependence_figures" not in record["metadata"]

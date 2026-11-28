@@ -114,7 +114,6 @@ by one or more items below.
 
 ## Phase 8: Explainability
 
-- [ ] 8.2b Add dependence plots of the most important ordered columns and local explanations of selected titles to `vgsales explain` and its report.
 - [ ] 8.3 Compute permutation importance on the temporal holdout and compare with the SHAP ranking.
 
 ## Phase 9: Experiment tracking
@@ -197,3 +196,4 @@ by one or more items below.
 - [x] 2026-11-27: 8.1a Add TreeSHAP values of the boosting models with global importance by model column and by input column, and importance and summary figures.
 - [x] 2026-11-28: 8.1b Add a `vgsales explain` command that fits a boosting model on the development years and writes the SHAP importance table and figures.
 - [x] 2026-11-28: 8.2a Add SHAP dependence plots and local explanations for individual titles: an exact additive decomposition by input column and a waterfall figure.
+- [x] 2026-11-28: 8.2b Add dependence plots of the most important ordered columns and local explanations of selected titles to `vgsales explain` and its report.
