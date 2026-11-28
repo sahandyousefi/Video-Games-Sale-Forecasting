@@ -19,6 +19,11 @@ interval score, and their coverage by release year and by genre, with a
 reliability figure when matplotlib is installed. Like ``evaluate``, it never
 reads the holdout.
 
+``vgsales explain`` fits the configured boosting models on all development
+years and writes their TreeSHAP importance by input column, with importance
+and summary figures when matplotlib is installed. The rows explained are
+development rows; the holdout is not read.
+
 ``vgsales tune`` searches the hyperparameters of one model with Optuna on the
 same expanding-window folds and saves the best configuration to
 ``output.tuned_dir``. ``evaluate`` and ``train`` apply the saved parameters
@@ -75,6 +80,7 @@ from vgsales.evaluation.reports import (
     write_holdout_report,
     write_interval_report,
     write_series_report,
+    write_shap_report,
     write_tuning_report,
 )
 from vgsales.evaluation.rolling import (
@@ -82,10 +88,22 @@ from vgsales.evaluation.rolling import (
     rolling_origin_evaluation,
     rolling_origins,
 )
+from vgsales.explain.tree_shap import (
+    ShapExplanation,
+    explain_trees,
+    importance_table,
+    plot_shap_importance,
+    plot_shap_summary,
+)
 from vgsales.features.prerelease import GROUP_COLUMN
 from vgsales.models.forecasting import SeriesForecaster, make_forecaster
 from vgsales.models.intervals import interval_dependency, make_interval_model
-from vgsales.models.registry import is_available, make_model, missing_dependency
+from vgsales.models.registry import (
+    get_spec,
+    is_available,
+    make_model,
+    missing_dependency,
+)
 from vgsales.models.target import with_target_transform
 from vgsales.tuning.search import quiet_optuna, tune
 from vgsales.tuning.spaces import get_space
@@ -102,6 +120,7 @@ INTERVAL_SUMMARY = (
     "rmsle",
 )
 COVERAGE_FIGURE = Path("figures") / "interval_coverage.png"
+FIGURE_DIR = Path("figures")
 
 
 def build_model(
@@ -421,6 +440,107 @@ def _intervals(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
+def _explain_models(
+    args: argparse.Namespace, config: Config
+) -> tuple[list[str], list[str]]:
+    names = list(args.models or config.explain.models)
+    for name in names:
+        if get_spec(name).family != "boosting":
+            raise ValueError(f"TreeSHAP explains boosting models only, got {name!r}")
+    if args.models:
+        for name in names:
+            hint = missing_dependency(name)
+            if hint is not None:
+                raise ImportError(f"model {name!r} is unavailable: {hint}")
+        return names, []
+    available = [name for name in names if is_available(name)]
+    skipped = [name for name in names if name not in available]
+    for name in skipped:
+        print(f"skipped {name}: {missing_dependency(name)}")
+    if not available:
+        raise ValueError("none of the configured boosting models is available")
+    return available, skipped
+
+
+def _shap_figures(
+    explanations: Mapping[str, ShapExplanation], top: int, directory: Path
+) -> dict[str, dict[str, str]]:
+    if importlib.util.find_spec("matplotlib") is None:
+        print('skipped the SHAP figures: pip install "vgsales[explain]"')
+        return {}
+    (directory / FIGURE_DIR).mkdir(parents=True, exist_ok=True)
+    figures = {}
+    for name, explanation in explanations.items():
+        importance = FIGURE_DIR / f"shap_importance_{name}.png"
+        summary = FIGURE_DIR / f"shap_summary_{name}.png"
+        plot_shap_importance(
+            explanation,
+            top=top,
+            title=f"Global SHAP importance: {name}",
+            path=directory / importance,
+        )
+        plot_shap_summary(
+            explanation,
+            top=top,
+            title=f"SHAP values by row: {name}",
+            path=directory / summary,
+        )
+        figures[name] = {
+            "importance": importance.as_posix(),
+            "summary": summary.as_posix(),
+        }
+    return figures
+
+
+def _explain(args: argparse.Namespace, config: Config) -> int:
+    names, skipped = _explain_models(args, config)
+    if importlib.util.find_spec("shap") is None:
+        raise ImportError(
+            'SHAP values need the shap package: pip install "vgsales[explain]"'
+        )
+    tuned = _tuned_params(args, config, names)
+    dataset, source = _dataset(args, config)
+    _print_header(dataset, source)
+    X, y = dataset.development()
+    settings = config.explain
+    explanations = {}
+    for name in names:
+        model = with_target_transform(
+            build_model(name, config, tuned.get(name)), config.target.transform
+        )
+        model.fit(X, y)
+        explanations[name] = explain_trees(
+            model, X, max_rows=settings.max_rows, random_state=config.seed
+        )
+    n_rows = len(next(iter(explanations.values())).values)
+    print(
+        f"\nmean |SHAP value| by input column on {n_rows} of {len(X)} development "
+        "rows (log(1 + sales) scale):"
+    )
+    print(importance_table(explanations).to_string(float_format="{:.4f}".format))
+    directory = _report_dir(args, config, source)
+    if directory is not None:
+        directory = Path(directory)
+        metadata = _metadata(config, dataset, source)
+        metadata["explained_rows"] = {
+            "n_rows": n_rows,
+            "n_available": len(X),
+            "seed": config.seed,
+        }
+        if skipped:
+            metadata["skipped_models"] = skipped
+        if tuned:
+            metadata["tuned_params"] = tuned
+        figures = _shap_figures(explanations, settings.top, directory)
+        if figures:
+            metadata["figures"] = figures
+        paths = write_shap_report(explanations, directory, metadata, top=settings.top)
+        written = [*paths]
+        written += [directory / p for item in figures.values() for p in item.values()]
+        print("\nwrote " + ", ".join(str(path) for path in written))
+    return 0
+
+
 def _tuned_dir(args: argparse.Namespace, config: Config, source: str) -> Path | None:
     if args.output_dir is not None:
         return args.output_dir
@@ -561,6 +681,18 @@ def _parser() -> argparse.ArgumentParser:
         "--methods", nargs="+", help="interval methods (default: intervals.methods)"
     )
     intervals.set_defaults(handler=_intervals)
+
+    explain = commands.add_parser(
+        "explain",
+        parents=[common],
+        help="fit the boosting models on the development years and write "
+        "their TreeSHAP importance",
+    )
+    explain.add_argument(
+        "--models", nargs="+", help="boosting models (default: explain.models)"
+    )
+    explain.add_argument("--tuned", action="store_true", help=tuned_help)
+    explain.set_defaults(handler=_explain)
 
     search = commands.add_parser(
         "tune",

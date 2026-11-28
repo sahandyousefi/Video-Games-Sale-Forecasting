@@ -391,6 +391,32 @@ class IntervalConfig:
 
 
 @dataclass(frozen=True)
+class ExplainConfig:
+    """TreeSHAP explanations of the boosting models.
+
+    ``vgsales explain`` fits each model in ``models`` on all development
+    years with its ``models.params`` and explains at most ``max_rows``
+    development rows (all of them when None). Figures show the ``top`` most
+    important columns. The models are checked to be boosting models when
+    the command runs.
+    """
+
+    models: tuple[str, ...] = ("xgboost", "lightgbm", "catboost")
+    max_rows: int | None = 2000
+    top: int = 15
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "models", tuple(self.models))
+        if not self.models:
+            raise ValueError("explain.models must name at least one model")
+        if len(set(self.models)) != len(self.models):
+            raise ValueError(f"explain.models has duplicates: {self.models}")
+        if self.max_rows is not None:
+            _require_int("explain.max_rows", self.max_rows, 1)
+        _require_int("explain.top", self.top, 1)
+
+
+@dataclass(frozen=True)
 class OutputConfig:
     """Directories for fitted models, generated reports and tuned parameters."""
 
@@ -412,6 +438,7 @@ class Config:
     series: SeriesConfig = field(default_factory=SeriesConfig)
     tuning: TuningConfig = TuningConfig()
     intervals: IntervalConfig = field(default_factory=IntervalConfig)
+    explain: ExplainConfig = ExplainConfig()
     output: OutputConfig = OutputConfig()
 
     def to_dict(self) -> dict[str, Any]:
@@ -428,6 +455,7 @@ _SECTIONS: dict[str, type] = {
     "series": SeriesConfig,
     "tuning": TuningConfig,
     "intervals": IntervalConfig,
+    "explain": ExplainConfig,
     "output": OutputConfig,
 }
 
@@ -451,8 +479,8 @@ def config_from_dict(raw: dict[str, Any]) -> Config:
     ----------
     raw : dict
         Mapping with optional keys ``seed``, ``data``, ``target``, ``split``,
-        ``features``, ``models``, ``series``, ``tuning``, ``intervals`` and
-        ``output``.
+        ``features``, ``models``, ``series``, ``tuning``, ``intervals``,
+        ``explain`` and ``output``.
         Missing keys take their default values.
 
     Returns

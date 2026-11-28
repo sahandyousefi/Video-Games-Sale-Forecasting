@@ -11,7 +11,7 @@ release years that the model has not seen.
 ```
 .
 |-- .github/workflows/ci.yml   lint and tests on every push
-|-- configs/                   YAML configuration (data, split, features, models, series, tuning)
+|-- configs/                   YAML configuration (data, split, features, models, series, tuning, intervals, explain)
 |   `-- tuned/                 tuned parameters written by `vgsales tune`, one file per model
 |-- data/README.md             source, license, schema, acquisition
 |-- docs/                      methodology and model card
@@ -20,7 +20,7 @@ release years that the model has not seen.
 |-- src/vgsales/
 |   |-- config.py              typed configuration loader
 |   |-- dataset.py             raw extract to features, target and holdout split; monthly series
-|   |-- cli.py                 command-line entry point (train, evaluate, series, intervals, tune)
+|   |-- cli.py                 command-line entry point (train, evaluate, series, intervals, explain, tune)
 |   |-- data/                  schema, loading, cleaning, splits, profiling, aggregate series, synthetic data
 |   |-- features/              leakage-safe encoders, pre-release features, embedding inputs, sequence windows
 |   |-- models/                target transform, baselines, gradient boosting, quantile regression, conformal intervals, registries, series baselines
@@ -114,7 +114,6 @@ by one or more items below.
 
 ## Phase 8: Explainability
 
-- [ ] 8.1b Add a `vgsales explain` command that fits a boosting model on the development years and writes the SHAP importance table and figures.
 - [ ] 8.2 Add SHAP dependence plots and local explanations for individual titles.
 - [ ] 8.3 Compute permutation importance on the temporal holdout and compare with the SHAP ranking.
 
@@ -196,3 +195,4 @@ by one or more items below.
 - [x] 2026-11-27: 7.4a Evaluate coverage by release year and genre with Wilson intervals, and a reliability figure of each method's coverage against the nominal level.
 - [x] 2026-11-27: 7.4b Add a `vgsales intervals` command that compares the configured interval methods on the expanding-window folds and writes the interval report, the coverage tables and the reliability figure.
 - [x] 2026-11-27: 8.1a Add TreeSHAP values of the boosting models with global importance by model column and by input column, and importance and summary figures.
+- [x] 2026-11-28: 8.1b Add a `vgsales explain` command that fits a boosting model on the development years and writes the SHAP importance table and figures.

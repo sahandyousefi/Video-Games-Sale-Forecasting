@@ -23,6 +23,8 @@ from vgsales.evaluation.reports import (
     INTERVALS_MARKDOWN,
     SERIES_JSON,
     SERIES_MARKDOWN,
+    SHAP_JSON,
+    SHAP_MARKDOWN,
     SYNTHETIC,
     coverage_pivot,
     cv_markdown,
@@ -30,13 +32,16 @@ from vgsales.evaluation.reports import (
     interval_markdown,
     markdown_table,
     series_markdown,
+    shap_markdown,
     to_jsonable,
     write_cv_report,
     write_holdout_report,
     write_interval_report,
     write_series_report,
+    write_shap_report,
 )
 from vgsales.evaluation.rolling import rolling_origin_evaluation, rolling_origins
+from vgsales.explain.tree_shap import ShapExplanation
 from vgsales.features.pipeline import make_preprocessor
 from vgsales.models.conformal import SplitConformalRegressor
 from vgsales.models.forecasting import (
@@ -305,3 +310,84 @@ def test_interval_report(interval_setup, tmp_path: Path) -> None:
     assert "synthetic" not in without
     with pytest.raises(ValueError, match="must not be empty"):
         interval_markdown({}, by_year, by_genre)
+
+
+def shap_explanation(scale: float) -> ShapExplanation:
+    values = pd.DataFrame(
+        {
+            "console_PS4": [0.2, -0.1, 0.0, 0.1],
+            "console_PC": [-0.3, 0.1, 0.0, 0.0],
+            "publisher_te": [0.0, 0.2, 0.2, -0.1],
+            "critic_score": [0.5, -0.5, 0.1, 0.0],
+        }
+    )
+    sources = {
+        "console_PS4": "console",
+        "console_PC": "console",
+        "publisher_te": "publisher",
+        "critic_score": "critic_score",
+    }
+    return ShapExplanation(
+        values=values * scale, data=values.abs(), base_value=0.3, sources=sources
+    )
+
+
+def test_shap_report(tmp_path: Path) -> None:
+    explanations = {"lightgbm": shap_explanation(1.0), "xgboost": shap_explanation(2.0)}
+    metadata = {
+        "source": SYNTHETIC,
+        "explained_rows": {"n_rows": 4, "n_available": 10, "seed": 0},
+        "tuned_params": {"xgboost": {"max_depth": 4}},
+        "config": {"target": {"transform": "log1p"}},
+        "figures": {
+            name: {
+                "importance": f"figures/shap_importance_{name}.png",
+                "summary": f"figures/shap_summary_{name}.png",
+            }
+            for name in explanations
+        },
+    }
+    json_path, md_path = write_shap_report(explanations, tmp_path, metadata, top=3)
+    assert json_path == tmp_path / SHAP_JSON
+    assert md_path == tmp_path / SHAP_MARKDOWN
+
+    record = json.loads(json_path.read_text(encoding="utf-8"))
+    assert list(record["models"]) == ["lightgbm", "xgboost"]
+    model = record["models"]["xgboost"]
+    assert model["n_rows"] == 4
+    assert model["base_value"] == pytest.approx(0.3)
+    assert list(model["importance_by_input"]) == [
+        "critic_score",
+        "publisher",
+        "console",
+    ]
+    assert model["importance_by_input"]["console"] == pytest.approx(2 * 0.2 / 4)
+    assert model["importance_by_model_column"]["critic_score"] == pytest.approx(0.55)
+    assert record["metadata"]["explained_rows"]["n_available"] == 10
+    assert "created" in record["metadata"]
+
+    markdown = md_path.read_text(encoding="utf-8")
+    for heading in (
+        "# SHAP importance",
+        "## Method",
+        "## Importance by input column",
+        "## Most important model columns (at most 3 per model)",
+        "## Figures",
+    ):
+        assert heading in markdown
+    assert "random subsample of 4 of the 10 development rows" in markdown
+    assert "(tuned parameters for xgboost)" in markdown
+    assert "The data are synthetic" in markdown
+    assert "back-transformed" not in markdown
+    assert "| critic_score | 0.2750 | 0.5500 |" in markdown
+    assert "| 1 | critic_score (0.2750) | critic_score (0.5500) |" in markdown
+    assert "![SHAP values of xgboost by row](figures/shap_summary_xgboost.png)" in (
+        markdown
+    )
+
+    plain = shap_markdown({"lightgbm": explanations["lightgbm"]}, {"source": "x.csv"})
+    assert "all 4 development rows" in plain
+    assert "## Figures" not in plain
+    assert "tuned" not in plain
+    with pytest.raises(ValueError, match="must not be empty"):
+        shap_markdown({})

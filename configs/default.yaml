@@ -154,6 +154,15 @@ intervals:
   point_model: lightgbm
   calibration_years: 2
 
+explain:
+  # Boosting models (gbm extras) fitted on all development years by
+  # `vgsales explain` and explained by TreeSHAP (explain extras) on at most
+  # max_rows development rows; null explains every row. Figures show the top
+  # columns. Models whose library is not installed are skipped.
+  models: [xgboost, lightgbm, catboost]
+  max_rows: 2000
+  top: 15
+
 output:
   model_dir: models
   report_dir: reports

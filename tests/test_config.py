@@ -242,3 +242,30 @@ def test_interval_section_defaults() -> None:
 def test_invalid_interval_section(raw: dict, error: type) -> None:
     with pytest.raises(error):
         config_from_dict(raw)
+
+
+def test_explain_section_defaults() -> None:
+    explain = load_config().explain
+    assert explain.models == ("xgboost", "lightgbm", "catboost")
+    assert explain.max_rows == 2000
+    assert explain.top == 15
+    custom = config_from_dict({"explain": {"models": ["lightgbm"], "max_rows": None}})
+    assert custom.explain.models == ("lightgbm",)
+    assert custom.explain.max_rows is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "error"),
+    [
+        ({"explain": {"models": []}}, ValueError),
+        ({"explain": {"models": ["lightgbm", "lightgbm"]}}, ValueError),
+        ({"explain": {"max_rows": 0}}, ValueError),
+        ({"explain": {"max_rows": 10.5}}, TypeError),
+        ({"explain": {"top": 0}}, ValueError),
+        ({"explain": {"top": True}}, TypeError),
+        ({"explain": {"rows": "holdout"}}, ValueError),
+    ],
+)
+def test_invalid_explain_section(raw: dict, error: type) -> None:
+    with pytest.raises(error):
+        config_from_dict(raw)

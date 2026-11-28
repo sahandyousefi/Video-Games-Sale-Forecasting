@@ -14,7 +14,9 @@ configuration of a hyperparameter search, its per-fold scores and the trial
 table (:mod:`vgsales.tuning.search`). The interval report holds the
 cross-validated interval scores of each method and their coverage by release
 year and by genre (:mod:`vgsales.evaluation.interval_cv`,
-:mod:`vgsales.evaluation.coverage`).
+:mod:`vgsales.evaluation.coverage`). The SHAP report holds the global TreeSHAP
+importance of the boosting models fitted on the development years
+(:mod:`vgsales.explain.tree_shap`).
 """
 
 from __future__ import annotations
@@ -35,9 +37,11 @@ from vgsales.evaluation.interval_cv import IntervalCVResult, interval_comparison
 from vgsales.evaluation.metrics import GREATER_IS_BETTER, PRIMARY_METRIC
 from vgsales.evaluation.rolling import RollingResult, paired_origin_tests
 from vgsales.evaluation.significance import paired_comparison
+from vgsales.explain.tree_shap import importance_table
 from vgsales.models.intervals import METHOD_SUMMARIES
 
 if TYPE_CHECKING:
+    from vgsales.explain.tree_shap import ShapExplanation
     from vgsales.tuning.search import TuningResult
 
 CV_JSON = "cv_metrics.json"
@@ -46,6 +50,8 @@ SERIES_JSON = "series_metrics.json"
 SERIES_MARKDOWN = "series_comparison.md"
 INTERVALS_JSON = "interval_metrics.json"
 INTERVALS_MARKDOWN = "interval_comparison.md"
+SHAP_JSON = "shap_importance.json"
+SHAP_MARKDOWN = "shap_importance.md"
 TOP_TRIALS = 10
 SYNTHETIC = "synthetic"
 
@@ -121,7 +127,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _source_lines(metadata: Mapping[str, Any]) -> list[str]:
+def _source_lines(metadata: Mapping[str, Any], scores: bool = True) -> list[str]:
     source = metadata.get("source", "unknown")
     lines = [f"- Source: {source}"]
     if source == SYNTHETIC:
@@ -149,11 +155,13 @@ def _source_lines(metadata: Mapping[str, Any]) -> list[str]:
             + ", ".join(skipped)
         )
     transform = metadata.get("config", {}).get("target", {}).get("transform")
-    if transform:
+    if transform and scores:
         lines.append(
             f"- Models are fitted on the {transform} scale of total sales; all "
             "metrics score back-transformed predictions in millions of units"
         )
+    elif transform:
+        lines.append(f"- Models are fitted on the {transform} scale of total sales")
     return lines
 
 
@@ -833,4 +841,138 @@ def write_interval_report(
     json_path = _write(directory / INTERVALS_JSON, _dump(record))
     markdown = interval_markdown(results, by_year, by_genre, metadata)
     md_path = _write(directory / INTERVALS_MARKDOWN, markdown)
+    return json_path, md_path
+
+
+def shap_record(
+    explanations: Mapping[str, ShapExplanation],
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Collect the SHAP importance of each model in a JSON-ready dict.
+
+    Parameters
+    ----------
+    explanations : mapping of str to ShapExplanation
+        Explanations keyed by model name.
+    metadata : mapping, optional
+        Provenance as written by the command line.
+
+    Returns
+    -------
+    dict
+        Keys ``metadata`` and ``models``; each model holds the number of
+        explained rows, the base value and the importance by input column and
+        by model column, on the modelling scale.
+    """
+    models = {
+        name: {
+            "n_rows": len(item.values),
+            "base_value": item.base_value,
+            "importance_by_input": item.grouped_importance().to_dict(),
+            "importance_by_model_column": item.importance().to_dict(),
+        }
+        for name, item in explanations.items()
+    }
+    return to_jsonable({"metadata": dict(metadata or {}), "models": models})
+
+
+def _top_columns(explanations: Mapping[str, ShapExplanation], top: int) -> pd.DataFrame:
+    columns = {}
+    for name, item in explanations.items():
+        importance = item.importance().head(top)
+        cells = [f"{column} ({value:.4f})" for column, value in importance.items()]
+        columns[name] = cells + [""] * (top - len(cells))
+    table = pd.DataFrame(columns, index=pd.RangeIndex(1, top + 1, name="rank"))
+    return table
+
+
+def shap_markdown(
+    explanations: Mapping[str, ShapExplanation],
+    metadata: Mapping[str, Any] | None = None,
+    top: int = 15,
+) -> str:
+    """Render the SHAP importance of several models as a markdown document.
+
+    Parameters
+    ----------
+    explanations : mapping of str to ShapExplanation
+        Explanations keyed by model name, computed on the same rows.
+    metadata : mapping, optional
+        Keys ``source``, ``version``, ``created``, ``config``, ``dataset``,
+        ``skipped_models``, ``explained_rows`` and ``figures`` as written by
+        the command line.
+    top : int, default 15
+        Number of model columns listed per model.
+
+    Returns
+    -------
+    str
+        Markdown document.
+    """
+    if not explanations:
+        raise ValueError("explanations must not be empty")
+    metadata = metadata or {}
+    rows = metadata.get("explained_rows", {})
+    n_rows = len(next(iter(explanations.values())).values)
+    n_available = rows.get("n_available", n_rows)
+    subset = (
+        f"a random subsample of {n_rows} of the {n_available} development rows"
+        if n_rows < n_available
+        else f"all {n_rows} development rows"
+    )
+    tuned = metadata.get("tuned_params") or {}
+    params = "configured parameters"
+    if tuned:
+        params += f" (tuned parameters for {', '.join(tuned)})"
+    sections = [
+        "# SHAP importance",
+        "\n".join(_source_lines(metadata, scores=False)),
+        "## Method",
+        f"Each model is fitted once on all development years with its {params} "
+        "and explained by path-dependent TreeSHAP "
+        f"(Lundberg et al., 2020) on {subset}. SHAP values are on the "
+        "log(1 + sales) scale, where they add up to the prediction of the "
+        "model. The importance of an input column is the mean absolute value "
+        "of the sum of the SHAP values of its model columns (one-hot "
+        "indicators, frequency and target encodings). Columns that carry "
+        "related information share credit according to the splits of each "
+        "model, so the ranking describes the fitted models, not causal effects "
+        "of the features. The holdout is not used.",
+        "## Importance by input column",
+        "Mean absolute SHAP value. Input columns are sorted by their importance "
+        "under the first model.",
+        markdown_table(importance_table(explanations)),
+        f"## Most important model columns (at most {top} per model)",
+        markdown_table(_top_columns(explanations, top)),
+    ]
+    figures = metadata.get("figures") or {}
+    if figures:
+        sections.append("## Figures")
+        for name, paths in figures.items():
+            sections.append(
+                f"![Global SHAP importance of {name}]({paths['importance']})\n\n"
+                f"![SHAP values of {name} by row]({paths['summary']})"
+            )
+    return "\n\n".join(sections) + "\n"
+
+
+def write_shap_report(
+    explanations: Mapping[str, ShapExplanation],
+    directory: str | Path,
+    metadata: Mapping[str, Any] | None = None,
+    top: int = 15,
+) -> tuple[Path, Path]:
+    """Write ``shap_importance.json`` and ``shap_importance.md`` to ``directory``.
+
+    Returns
+    -------
+    tuple of Path
+        Paths of the JSON and markdown files.
+    """
+    metadata = {"created": _now(), **(metadata or {})}
+    directory = Path(directory)
+    record = shap_record(explanations, metadata)
+    json_path = _write(directory / SHAP_JSON, _dump(record))
+    markdown = shap_markdown(explanations, metadata, top=top)
+    md_path = _write(directory / SHAP_MARKDOWN, markdown)
     return json_path, md_path

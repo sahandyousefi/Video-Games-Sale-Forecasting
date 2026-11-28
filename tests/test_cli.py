@@ -423,3 +423,91 @@ def test_intervals_runs_every_default_method(
     table = capsys.readouterr().out.split("intervals (sales")[1]
     for method in ("quantile", "conformal", "cqr"):
         assert method in table
+
+
+@pytest.fixture
+def explain_config(tmp_path: Path) -> Path:
+    path = tmp_path / "explain.yaml"
+    path.write_text(
+        "seed: 3\nmodels:\n  params:\n"
+        "    lightgbm: {n_estimators: 60, early_stopping_rounds: 10}\n"
+        "explain:\n  models: [lightgbm, catboost]\n  max_rows: 200\n  top: 5\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.mark.skipif(not is_available("lightgbm"), reason="lightgbm is not installed")
+def test_explain_writes_shap_importance_and_figures(
+    explain_config: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pytest.importorskip("shap")
+    original = importlib.util.find_spec
+
+    def find_spec(name: str, *args: object) -> object:
+        return None if name == "catboost" else original(name, *args)
+
+    monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+    reports = tmp_path / "reports"
+    argv = ["explain", "--config", str(explain_config), "--synthetic", N_TITLES]
+    assert main([*argv, "--report-dir", str(reports)]) == 0
+    out = capsys.readouterr().out
+    assert "skipped catboost: catboost is not installed" in out
+    assert "mean |SHAP value| by input column on 200 of" in out
+    assert "publisher" in out.split("scale):")[1]
+
+    record = json.loads((reports / "shap_importance.json").read_text("utf-8"))
+    assert list(record["models"]) == ["lightgbm"]
+    assert record["models"]["lightgbm"]["n_rows"] == 200
+    assert record["metadata"]["skipped_models"] == ["catboost"]
+    assert record["metadata"]["explained_rows"]["seed"] == 3
+    markdown = (reports / "shap_importance.md").read_text("utf-8")
+    assert "random subsample of 200" in markdown
+    has_figures = original("matplotlib") is not None
+    for kind in ("importance", "summary"):
+        figure = reports / "figures" / f"shap_{kind}_lightgbm.png"
+        assert figure.is_file() == has_figures
+    assert ("## Figures" in markdown) == has_figures
+
+    assert main([*argv, "--models", "catboost"]) == 1
+    assert "unavailable" in capsys.readouterr().err
+
+
+def test_explain_rejects_models_without_trees(
+    explain_config: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    argv = ["explain", "--config", str(explain_config), "--synthetic", N_TITLES]
+    assert main([*argv, "--models", "ridge"]) == 1
+    assert "boosting models only" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(not is_available("lightgbm"), reason="lightgbm is not installed")
+def test_explain_needs_shap_and_skips_figures_without_matplotlib(
+    explain_config: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    original = importlib.util.find_spec
+    missing = {"shap"}
+
+    def find_spec(name: str, *args: object) -> object:
+        return None if name in missing else original(name, *args)
+
+    monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+    reports = tmp_path / "reports"
+    argv = ["explain", "--config", str(explain_config), "--synthetic", N_TITLES]
+    argv += ["--models", "lightgbm", "--report-dir", str(reports)]
+    assert main(argv) == 1
+    assert "vgsales[explain]" in capsys.readouterr().err
+
+    if original("shap") is None:
+        return
+    missing = {"matplotlib"}
+    assert main(argv) == 0
+    assert "skipped the SHAP figures" in capsys.readouterr().out
+    assert not (reports / "figures").exists()
+    assert "## Figures" not in (reports / "shap_importance.md").read_text("utf-8")
