@@ -24,7 +24,9 @@ years and writes their TreeSHAP importance by input column. For the first
 model it adds local explanations of single titles and, when matplotlib is
 installed, dependence plots of the most important ordered columns, next to
 the importance and summary figures of every model. The rows explained are
-development rows; the holdout is not read.
+development rows. The holdout is read only with ``--holdout``, which adds
+the permutation importance of the first model on the holdout and compares
+its ranking with the SHAP ranking.
 
 ``vgsales tune`` searches the hyperparameters of one model with Optuna on the
 same expanding-window folds and saves the best configuration to
@@ -99,6 +101,13 @@ from vgsales.explain.local import (
     plot_local_explanation,
     plot_shap_dependence,
     spread_rows,
+)
+from vgsales.explain.permutation import (
+    PermutationResult,
+    compare_rankings,
+    grouped_shap_importance,
+    permutation_importance,
+    rank_correlation,
 )
 from vgsales.explain.tree_shap import (
     ShapExplanation,
@@ -588,6 +597,36 @@ def _print_local(local: Sequence[LocalExplanation], name: str, selection: str) -
         print(item.contributions.to_string(float_format="{:+.4f}".format))
 
 
+def _holdout_permutation(
+    model: BaseEstimator,
+    explanation: ShapExplanation,
+    dataset: Dataset,
+    name: str,
+    config: Config,
+) -> PermutationResult:
+    X_test, y_test = dataset.holdout()
+    result = permutation_importance(
+        model,
+        X_test,
+        y_test,
+        n_repeats=config.explain.n_repeats,
+        random_state=config.seed,
+    )
+    shap = grouped_shap_importance(explanation, result.groups)
+    table = compare_rankings(result.importance()["importance"], shap)
+    print(
+        f"\npermutation importance of {name} on {len(X_test)} holdout rows "
+        f"({result.metric} {result.baseline:.4f} before permutation, "
+        f"{config.explain.n_repeats} repeats) and grouped SHAP importance:"
+    )
+    shown = table.copy()
+    for column in ("permutation_rank", "shap_rank"):
+        shown[column] = shown[column].map("{:g}".format)
+    print(shown.to_string(float_format="{:.4f}".format))
+    print(f"Spearman rank correlation: {rank_correlation(table):.3f}")
+    return result
+
+
 def _explain(args: argparse.Namespace, config: Config) -> int:
     names, skipped = _explain_models(args, config)
     if importlib.util.find_spec("shap") is None:
@@ -620,6 +659,11 @@ def _explain(args: argparse.Namespace, config: Config) -> int:
     print(importance_table(explanations).to_string(float_format="{:.4f}".format))
     if local:
         _print_local(local, primary, selection)
+    permutation = None
+    if args.holdout:
+        permutation = _holdout_permutation(
+            models[primary], explanations[primary], dataset, primary, config
+        )
     directory = _report_dir(args, config, source)
     if directory is not None:
         directory = Path(directory)
@@ -638,7 +682,12 @@ def _explain(args: argparse.Namespace, config: Config) -> int:
         figures = _shap_figures(explanations, local, settings, directory)
         metadata.update(figures)
         paths = write_shap_report(
-            explanations, directory, metadata, top=settings.top, local=local
+            explanations,
+            directory,
+            metadata,
+            top=settings.top,
+            local=local,
+            permutation=permutation,
         )
         written = [str(path) for path in paths]
         written += [str(directory / path) for path in _figure_paths(figures)]
@@ -797,6 +846,11 @@ def _parser() -> argparse.ArgumentParser:
         "--models", nargs="+", help="boosting models (default: explain.models)"
     )
     explain.add_argument("--tuned", action="store_true", help=tuned_help)
+    explain.add_argument(
+        "--holdout",
+        action="store_true",
+        help="also compute permutation importance on the holdout",
+    )
     explain.set_defaults(handler=_explain)
 
     search = commands.add_parser(

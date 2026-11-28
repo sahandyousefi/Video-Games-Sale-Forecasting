@@ -17,7 +17,9 @@ year and by genre (:mod:`vgsales.evaluation.interval_cv`,
 :mod:`vgsales.evaluation.coverage`). The SHAP report holds the global TreeSHAP
 importance of the boosting models fitted on the development years
 (:mod:`vgsales.explain.tree_shap`), with dependence plots and local
-explanations of single rows (:mod:`vgsales.explain.local`).
+explanations of single rows (:mod:`vgsales.explain.local`) and, when
+requested, permutation importance on the holdout
+(:mod:`vgsales.explain.permutation`).
 """
 
 from __future__ import annotations
@@ -38,11 +40,17 @@ from vgsales.evaluation.interval_cv import IntervalCVResult, interval_comparison
 from vgsales.evaluation.metrics import GREATER_IS_BETTER, PRIMARY_METRIC
 from vgsales.evaluation.rolling import RollingResult, paired_origin_tests
 from vgsales.evaluation.significance import paired_comparison
+from vgsales.explain.permutation import (
+    compare_rankings,
+    grouped_shap_importance,
+    rank_correlation,
+)
 from vgsales.explain.tree_shap import importance_table
 from vgsales.models.intervals import METHOD_SUMMARIES
 
 if TYPE_CHECKING:
     from vgsales.explain.local import LocalExplanation
+    from vgsales.explain.permutation import PermutationResult
     from vgsales.explain.tree_shap import ShapExplanation
     from vgsales.tuning.search import TuningResult
 
@@ -857,10 +865,39 @@ def _local_record(local: LocalExplanation) -> dict[str, Any]:
     }
 
 
+def _permutation_table(
+    explanations: Mapping[str, ShapExplanation], permutation: PermutationResult
+) -> tuple[pd.DataFrame, float]:
+    """Permutation and SHAP importance of the first model by column group."""
+    explanation = next(iter(explanations.values()))
+    importance = permutation.importance()
+    shap = grouped_shap_importance(explanation, permutation.groups)
+    table = compare_rankings(importance["importance"], shap)
+    table.insert(1, "std", importance["std"].loc[table.index])
+    table.insert(0, "columns", importance["columns"].loc[table.index])
+    return table, rank_correlation(table)
+
+
+def _permutation_record(
+    explanations: Mapping[str, ShapExplanation], permutation: PermutationResult
+) -> dict[str, Any]:
+    table, rho = _permutation_table(explanations, permutation)
+    return {
+        "model": next(iter(explanations)),
+        "metric": permutation.metric,
+        "baseline": permutation.baseline,
+        "n_repeats": permutation.scores.shape[1],
+        "rank_correlation": rho,
+        "importance": table.reset_index().to_dict(orient="records"),
+        "scores": permutation.scores.to_dict(orient="index"),
+    }
+
+
 def shap_record(
     explanations: Mapping[str, ShapExplanation],
     metadata: Mapping[str, Any] | None = None,
     local: Sequence[LocalExplanation] = (),
+    permutation: PermutationResult | None = None,
 ) -> dict[str, Any]:
     """Collect the SHAP importance of each model in a JSON-ready dict.
 
@@ -872,13 +909,15 @@ def shap_record(
         Provenance as written by the command line.
     local : sequence of LocalExplanation, optional
         Decompositions of single rows.
+    permutation : PermutationResult, optional
+        Permutation importance of the first model on the holdout.
 
     Returns
     -------
     dict
-        Keys ``metadata``, ``models`` and, when ``local`` is given,
-        ``local_explanations``. Each model holds the number of explained
-        rows, the base value and the importance by input column and by model
+        Keys ``metadata``, ``models`` and, when given, ``local_explanations``
+        and ``permutation``. Each model holds the number of explained rows,
+        the base value and the importance by input column and by model
         column, on the modelling scale.
     """
     models = {
@@ -893,6 +932,8 @@ def shap_record(
     record: dict[str, Any] = {"metadata": dict(metadata or {}), "models": models}
     if local:
         record["local_explanations"] = [_local_record(item) for item in local]
+    if permutation is not None:
+        record["permutation"] = _permutation_record(explanations, permutation)
     return to_jsonable(record)
 
 
@@ -956,11 +997,63 @@ def _local_section(
     return sections
 
 
+def _permutation_section(
+    explanations: Mapping[str, ShapExplanation],
+    permutation: PermutationResult | None,
+    metadata: Mapping[str, Any],
+) -> list[str]:
+    if permutation is None:
+        return []
+    model = next(iter(explanations))
+    label = _LABELS.get(permutation.metric, permutation.metric)
+    table, rho = _permutation_table(explanations, permutation)
+    holdout = metadata.get("dataset", {}).get("holdout", {})
+    rows = "the holdout rows"
+    if holdout:
+        rows = (
+            f"{holdout['n_rows']} holdout rows released {holdout['first_year']} "
+            f"to {holdout['last_year']}"
+        )
+    out = pd.DataFrame(index=table.index)
+    out["columns"] = table["columns"]
+    out["permutation mean (sd)"] = [
+        f"{m:.4f} (n/a)" if np.isnan(sd) else f"{m:.4f} ({sd:.4f})"
+        for m, sd in zip(table["permutation"], table["std"], strict=True)
+    ]
+    out["rank"] = table["permutation_rank"].map("{:g}".format)
+    out["SHAP"] = table["shap"]
+    out["SHAP rank"] = table["shap_rank"].map("{:g}".format)
+    agreement = (
+        f"The Spearman rank correlation of the two rankings is {rho:.3f}."
+        if np.isfinite(rho)
+        else "The rank correlation is undefined for these rankings."
+    )
+    return [
+        "## Permutation importance on the holdout",
+        f"The {model} model fitted on the development years scores "
+        f"{label} = {permutation.baseline:.4f} on {rows}. The columns of each "
+        "group are permuted jointly across these rows "
+        f"{permutation.scores.shape[1]} times, and the importance is the mean "
+        f"increase of the {label} (Breiman, 2001; Fisher et al., 2019). Linked "
+        "columns form one group: the critic score with its missingness "
+        "indicator, and the release month with its quarter and holiday flag. "
+        "SHAP is the grouped mean absolute SHAP value on the explained "
+        "development rows. Permutation importance measures reliance on a "
+        "group for held-out accuracy, SHAP the size of its attributions, so the "
+        "rankings need not agree. Because the holdout spans few release years, "
+        "columns that vary mainly between years, such as the release year, "
+        "change little under permutation and score low by construction.",
+        markdown_table(out),
+        agreement,
+    ]
+
+
 def shap_markdown(
     explanations: Mapping[str, ShapExplanation],
     metadata: Mapping[str, Any] | None = None,
     top: int = 15,
     local: Sequence[LocalExplanation] = (),
+    permutation: PermutationResult | None = None,
 ) -> str:
     """Render the SHAP importance of several models as a markdown document.
 
@@ -977,6 +1070,9 @@ def shap_markdown(
         Number of model columns listed per model.
     local : sequence of LocalExplanation, optional
         Decompositions of single rows, listed in order.
+    permutation : PermutationResult, optional
+        Permutation importance of the first model on the holdout, compared
+        with its grouped SHAP importance.
 
     Returns
     -------
@@ -998,6 +1094,11 @@ def shap_markdown(
     params = "configured parameters"
     if tuned:
         params += f" (tuned parameters for {', '.join(tuned)})"
+    holdout_note = (
+        "The holdout is used only for the permutation importance below."
+        if permutation is not None
+        else "The holdout is not used."
+    )
     sections = [
         "# SHAP importance",
         "\n".join(_source_lines(metadata, scores=False)),
@@ -1011,7 +1112,7 @@ def shap_markdown(
         "indicators, frequency and target encodings). Columns that carry "
         "related information share credit according to the splits of each "
         "model, so the ranking describes the fitted models, not causal effects "
-        "of the features. The holdout is not used.",
+        f"of the features. {holdout_note}",
         "## Importance by input column",
         "Mean absolute SHAP value. Input columns are sorted by their importance "
         "under the first model.",
@@ -1029,6 +1130,7 @@ def shap_markdown(
             )
     sections += _dependence_section(metadata)
     sections += _local_section(local, metadata)
+    sections += _permutation_section(explanations, permutation, metadata)
     return "\n\n".join(sections) + "\n"
 
 
@@ -1038,6 +1140,7 @@ def write_shap_report(
     metadata: Mapping[str, Any] | None = None,
     top: int = 15,
     local: Sequence[LocalExplanation] = (),
+    permutation: PermutationResult | None = None,
 ) -> tuple[Path, Path]:
     """Write ``shap_importance.json`` and ``shap_importance.md`` to ``directory``.
 
@@ -1048,8 +1151,10 @@ def write_shap_report(
     """
     metadata = {"created": _now(), **(metadata or {})}
     directory = Path(directory)
-    record = shap_record(explanations, metadata, local)
+    record = shap_record(explanations, metadata, local, permutation)
     json_path = _write(directory / SHAP_JSON, _dump(record))
-    markdown = shap_markdown(explanations, metadata, top=top, local=local)
+    markdown = shap_markdown(
+        explanations, metadata, top=top, local=local, permutation=permutation
+    )
     md_path = _write(directory / SHAP_MARKDOWN, markdown)
     return json_path, md_path

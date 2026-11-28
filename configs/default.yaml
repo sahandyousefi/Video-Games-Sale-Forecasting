@@ -169,6 +169,9 @@ explain:
   dependence: 4
   titles: []
   n_local: 3
+  # Permutations per column group for the holdout permutation importance
+  # computed by `vgsales explain --holdout`.
+  n_repeats: 10
 
 output:
   model_dir: models

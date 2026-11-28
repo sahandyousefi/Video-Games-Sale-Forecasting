@@ -560,3 +560,35 @@ def test_explain_decomposes_the_listed_titles(
     assert len(labels) == n_rows
     assert all(label.startswith(key) for label in labels)
     assert "dependence_figures" not in record["metadata"]
+
+
+@pytest.mark.skipif(not is_available("lightgbm"), reason="lightgbm is not installed")
+def test_explain_holdout_adds_permutation_importance(
+    explain_config: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pytest.importorskip("shap")
+    reports = tmp_path / "reports"
+    argv = ["explain", "--config", str(explain_config), "--synthetic", N_TITLES]
+    argv += ["--models", "lightgbm", "--report-dir", str(reports)]
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    assert "permutation importance" not in out
+    markdown = (reports / "shap_importance.md").read_text("utf-8")
+    assert "The holdout is not used." in markdown
+
+    assert main([*argv, "--holdout"]) == 0
+    out = capsys.readouterr().out
+    assert "permutation importance of lightgbm on" in out
+    assert "Spearman rank correlation:" in out
+    record = json.loads((reports / "shap_importance.json").read_text("utf-8"))
+    permutation = record["permutation"]
+    assert permutation["model"] == "lightgbm"
+    assert permutation["metric"] == "rmsle"
+    assert permutation["n_repeats"] == 10
+    groups = [row["group"] for row in permutation["importance"]]
+    assert "critic_score" in groups
+    assert "critic_missing" not in groups
+    assert set(permutation["scores"]) == set(groups)
+    markdown = (reports / "shap_importance.md").read_text("utf-8")
+    assert "## Permutation importance on the holdout" in markdown
+    assert "used only for the permutation importance" in markdown

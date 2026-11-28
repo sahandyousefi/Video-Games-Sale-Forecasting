@@ -402,7 +402,8 @@ class ExplainConfig:
     the dependence of the ``dependence`` most important ordered columns and
     decomposes the predictions of the development rows of ``titles``, or,
     when no titles are given, of ``n_local`` rows at evenly spaced ranks of
-    the predicted sales.
+    the predicted sales. With ``--holdout``, the permutation importance of
+    that model on the holdout is averaged over ``n_repeats`` permutations.
     """
 
     models: tuple[str, ...] = ("xgboost", "lightgbm", "catboost")
@@ -411,6 +412,7 @@ class ExplainConfig:
     dependence: int = 4
     titles: tuple[str, ...] = ()
     n_local: int = 3
+    n_repeats: int = 10
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "models", tuple(self.models))
@@ -424,6 +426,7 @@ class ExplainConfig:
         _require_int("explain.top", self.top, 1)
         _require_int("explain.dependence", self.dependence, 0)
         _require_int("explain.n_local", self.n_local, 0)
+        _require_int("explain.n_repeats", self.n_repeats, 1)
         for title in self.titles:
             if not isinstance(title, str) or not title.strip():
                 raise TypeError(f"explain.titles must hold titles, got {title!r}")

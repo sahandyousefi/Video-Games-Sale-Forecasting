@@ -42,6 +42,7 @@ from vgsales.evaluation.reports import (
 )
 from vgsales.evaluation.rolling import rolling_origin_evaluation, rolling_origins
 from vgsales.explain.local import LocalExplanation
+from vgsales.explain.permutation import PermutationResult
 from vgsales.explain.tree_shap import ShapExplanation
 from vgsales.features.pipeline import make_preprocessor
 from vgsales.models.conformal import SplitConformalRegressor
@@ -438,3 +439,52 @@ def test_shap_report_with_local_explanations(tmp_path: Path) -> None:
     plain = shap_markdown(explanations, {}, local=())
     assert "## Local explanations" not in plain
     assert "## Dependence plots" not in plain
+
+
+def test_shap_report_with_permutation_importance(tmp_path: Path) -> None:
+    explanations = {"lightgbm": shap_explanation(1.0)}
+    scores = pd.DataFrame(
+        [[0.70, 0.74], [0.50, 0.52], [0.51, 0.49]],
+        index=pd.Index(["console", "publisher", "critic_score"], name="group"),
+    )
+    groups = {
+        "console": ("console",),
+        "publisher": ("publisher",),
+        "critic_score": ("critic_score", "critic_missing"),
+    }
+    permutation = PermutationResult("rmsle", 0.5, scores, groups)
+    metadata = {
+        "dataset": {
+            "development": {"n_rows": 10, "first_year": 2000, "last_year": 2009},
+            "holdout": {
+                "n_rows": 4,
+                "first_year": 2010,
+                "last_year": 2012,
+                "n_censored": 1,
+            },
+        }
+    }
+    json_path, md_path = write_shap_report(
+        explanations, tmp_path, metadata, permutation=permutation
+    )
+    record = json.loads(json_path.read_text(encoding="utf-8"))["permutation"]
+    assert record["model"] == "lightgbm"
+    assert record["baseline"] == 0.5
+    assert record["n_repeats"] == 2
+    rows = {row["group"]: row for row in record["importance"]}
+    assert rows["console"]["permutation"] == pytest.approx(0.22)
+    assert rows["console"]["permutation_rank"] == 1.0
+    assert rows["console"]["shap"] == pytest.approx(0.05)
+    assert rows["critic_score"]["columns"] == "critic_score, critic_missing"
+    assert rows["critic_score"]["shap"] == pytest.approx(0.275)
+    assert record["rank_correlation"] == pytest.approx(-1.0)
+    assert record["scores"]["publisher"] == {"0": 0.5, "1": 0.52}
+
+    markdown = md_path.read_text(encoding="utf-8")
+    assert "## Permutation importance on the holdout" in markdown
+    assert "RMSLE = 0.5000 on 4 holdout rows released 2010 to 2012" in markdown
+    assert "| console | console | 0.2200 (0.0283) | 1 | 0.0500 | 3 |" in markdown
+    assert "Spearman rank correlation of the two rankings is -1.000" in markdown
+    assert "used only for the permutation importance" in markdown
+    plain = shap_markdown(explanations, {}, permutation=permutation)
+    assert "on the holdout rows." in plain

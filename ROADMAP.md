@@ -114,7 +114,6 @@ by one or more items below.
 
 ## Phase 8: Explainability
 
-- [ ] 8.3b Add a `--holdout` option to `vgsales explain` that computes permutation importance on the temporal holdout and reports it next to the SHAP ranking.
 
 ## Phase 9: Experiment tracking
 
@@ -198,3 +197,4 @@ by one or more items below.
 - [x] 2026-11-28: 8.2a Add SHAP dependence plots and local explanations for individual titles: an exact additive decomposition by input column and a waterfall figure.
 - [x] 2026-11-28: 8.2b Add dependence plots of the most important ordered columns and local explanations of selected titles to `vgsales explain` and its report.
 - [x] 2026-11-28: 8.3a Compute permutation importance on held-out rows, with linked columns permuted jointly, and compare its ranking with the grouped SHAP ranking.
+- [x] 2026-11-28: 8.3b Add a `--holdout` option to `vgsales explain` that computes permutation importance on the temporal holdout and reports it next to the SHAP ranking.

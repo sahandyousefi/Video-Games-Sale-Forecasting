@@ -252,6 +252,7 @@ def test_explain_section_defaults() -> None:
     assert explain.dependence == 4
     assert explain.titles == ()
     assert explain.n_local == 3
+    assert explain.n_repeats == 10
     custom = config_from_dict({"explain": {"models": ["lightgbm"], "max_rows": None}})
     assert custom.explain.models == ("lightgbm",)
     assert custom.explain.max_rows is None
@@ -273,6 +274,7 @@ def test_explain_section_defaults() -> None:
         ({"explain": {"n_local": 1.0}}, TypeError),
         ({"explain": {"titles": ["Halo", " "]}}, TypeError),
         ({"explain": {"titles": [3]}}, TypeError),
+        ({"explain": {"n_repeats": 0}}, ValueError),
     ],
 )
 def test_invalid_explain_section(raw: dict, error: type) -> None:
