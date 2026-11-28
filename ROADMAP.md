@@ -27,7 +27,7 @@ release years that the model has not seen.
 |   |   `-- neural/            PyTorch data loading, networks and training
 |   |-- tuning/                search spaces, Optuna search with time-series CV, tuned-parameter files
 |   |-- evaluation/            point and interval metrics, cross-validation runners, coverage diagnostics, rolling-origin evaluation, reports
-|   |-- explain/               SHAP and permutation importance
+|   |-- explain/               SHAP importance, dependence plots, local explanations, permutation importance
 |   |-- monitoring/            drift statistics and reports
 |   `-- serving/               model bundle and FastAPI application
 |-- tests/                     unit and integration tests on synthetic data
@@ -114,7 +114,7 @@ by one or more items below.
 
 ## Phase 8: Explainability
 
-- [ ] 8.2 Add SHAP dependence plots and local explanations for individual titles.
+- [ ] 8.2b Add dependence plots of the most important ordered columns and local explanations of selected titles to `vgsales explain` and its report.
 - [ ] 8.3 Compute permutation importance on the temporal holdout and compare with the SHAP ranking.
 
 ## Phase 9: Experiment tracking
@@ -196,3 +196,4 @@ by one or more items below.
 - [x] 2026-11-27: 7.4b Add a `vgsales intervals` command that compares the configured interval methods on the expanding-window folds and writes the interval report, the coverage tables and the reliability figure.
 - [x] 2026-11-27: 8.1a Add TreeSHAP values of the boosting models with global importance by model column and by input column, and importance and summary figures.
 - [x] 2026-11-28: 8.1b Add a `vgsales explain` command that fits a boosting model on the development years and writes the SHAP importance table and figures.
+- [x] 2026-11-28: 8.2a Add SHAP dependence plots and local explanations for individual titles: an exact additive decomposition by input column and a waterfall figure.
